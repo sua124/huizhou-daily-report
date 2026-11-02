@@ -1,0 +1,32 @@
+{
+  "_note": "本文件会提交到公开仓库，账号密码一律不写在这里。本地请建 config_local.json（{\"moda\":{\"account\":\"\",\"password\":\"\"}}），云端用环境变量 MODA_ACCOUNT / MODA_PASSWORD 注入。",
+  "moda": {
+    "base_url": "https://moda.xjr2018.com",
+    "account": "",
+    "password": ""
+  },
+  "store": {
+    "store_id": 42,
+    "store_label": "惠州店",
+    "table_count": 32
+  },
+  "dingtalk_webhook": {
+    "enabled": false,
+    "access_token": "",
+    "secret": ""
+  },
+  "dingtalk_group": {
+    "name": "惠州一店管理组群",
+    "open_conversation_id": "ciduYUZBDcDNEyWrd71g2Stbw=="
+  },
+  "mentions": {
+    "02_赠菜折扣与停开售": ["余志玲", "罗惠玲"],
+    "03_出品超时": ["马锦荃", "谢海昇"]
+  },
+  "mentions_phones": {
+    "余志玲": "15813310697",
+    "罗惠玲": "15920881182",
+    "马锦荃": "13427109463",
+    "谢海昇": "17329554727"
+  }
+}

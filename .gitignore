@@ -1,0 +1,19 @@
+# 登录凭证与缓存，绝不进仓库
+token.json
+members.json
+config_local.json
+bots.json
+bots.err
+
+# 运行产物（reports/ 要提交，它是给 CDN 分发图片用的，不能忽略）
+data/
+output/
+daily.log
+run.log
+
+# Python
+__pycache__/
+*.pyc
+
+# 本地定时任务相关，云端不需要
+*.bat

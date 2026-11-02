@@ -1,0 +1,80 @@
+name: 惠州店经营日报
+
+on:
+  schedule:
+    # GitHub Actions 的 cron 一律用 UTC。北京时间 = UTC + 8
+    - cron: '0 14 * * 1-5'    # 工作日 22:00
+    - cron: '10 14 * * 6,0'   # 周末   22:10
+  workflow_dispatch:          # 手动补跑：Actions 页面点 Run workflow
+    inputs:
+      date:
+        description: '日报日期 YYYY-MM-DD，留空=今天'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装中文字体
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-noto-cjk
+          fc-list | grep -i cjk | head -3
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+
+      - name: 生成日报图
+        env:
+          MODA_ACCOUNT: ${{ secrets.MODA_ACCOUNT }}
+          MODA_PASSWORD: ${{ secrets.MODA_PASSWORD }}
+        run: |
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            python daily_report.py "${{ github.event.inputs.date }}"
+          else
+            python daily_report.py
+          fi
+
+      - name: 归档图片供 CDN 分发
+        run: |
+          mkdir -p reports
+          cp -f output/report_*.png reports/
+          # 只保留最近 14 天（3 张 × 14 天 = 42 张），避免仓库无限膨胀
+          ls -1t reports/*.png 2>/dev/null | tail -n +43 | xargs -r rm -f
+          git config user.name  "daily-report-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add -A reports
+          if git diff --cached --quiet; then
+            echo "图片无变化，跳过提交"
+          else
+            git commit -m "日报图 $(date +%F)"
+            git push
+          fi
+          # 变量名必须与 push_cloud.py 读取的 IMAGE_SHA 完全一致。
+          # 且必须用提交后的真实 sha：此时 GITHUB_SHA 还指向提交前的旧 commit，
+          # 拿它拼 CDN 地址会 404。
+          echo "IMAGE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "reports 目录现有 $(ls -1 reports/*.png | wc -l) 张图"
+
+      - name: 推送到钉钉群
+        env:
+          DINGTALK_WEBHOOK_TOKEN: ${{ secrets.DINGTALK_WEBHOOK_TOKEN }}
+          DINGTALK_WEBHOOK_SECRET: ${{ secrets.DINGTALK_WEBHOOK_SECRET }}
+        run: |
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            python cloud/push_cloud.py "${{ github.event.inputs.date }}"
+          else
+            python cloud/push_cloud.py
+          fi

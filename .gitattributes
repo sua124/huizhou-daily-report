@@ -1,1 +1,8 @@
+# 统一换行符，避免 Windows 的 CRLF 带到 Linux 服务器上
+# （workflow 里的多行 shell 如果带 \r，会报 $'\r': command not found）
 * text=auto eol=lf
+*.bat text eol=crlf
+
+# 图片按二进制处理
+*.png binary
+*.jpg binary
