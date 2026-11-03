@@ -3,8 +3,11 @@ name: 惠州店经营日报
 on:
   schedule:
     # GitHub Actions 的 cron 一律用 UTC。北京时间 = UTC + 8
-    - cron: '0 14 * * 1-5'    # 工作日 22:00
-    - cron: '10 14 * * 6,0'   # 周末   22:10
+    # 分钟刻意避开 :00 / :10 —— 整点是全球定时任务的高峰，GitHub 会把任务排到
+    # 队列里等半小时以上（实测 22:00 那批被延迟到 22:47 才开跑）。
+    # 用冷门分钟能明显减少排队延迟。
+    - cron: '7 14 * * 1-5'    # 工作日 22:07
+    - cron: '17 14 * * 6,0'   # 周末   22:17
   workflow_dispatch:          # 手动补跑：Actions 页面点 Run workflow
     inputs:
       date:
@@ -14,6 +17,11 @@ on:
 
 permissions:
   contents: write
+
+# 同一时间只允许一个任务在跑，避免两个任务同时 git push 撞 ref 锁
+concurrency:
+  group: daily-report
+  cancel-in-progress: false
 
 jobs:
   daily:
@@ -49,22 +57,42 @@ jobs:
 
       - name: 归档图片供 CDN 分发
         run: |
-          mkdir -p reports
-          cp -f output/report_*.png reports/
-          # 只保留最近 14 天（3 张 × 14 天 = 42 张），避免仓库无限膨胀
-          ls -1t reports/*.png 2>/dev/null | tail -n +43 | xargs -r rm -f
           git config user.name  "daily-report-bot"
           git config user.email "bot@users.noreply.github.com"
-          git add -A reports
-          if git diff --cached --quiet; then
-            echo "图片无变化，跳过提交"
-          else
-            git commit -m "日报图 $(date +%F)"
-            git push
+
+          # 每次都基于远端最新提交重建：两个任务同时 push 时，
+          # 后一个会拿到 "cannot lock ref ... expected xxx" 的拒绝，
+          # 单次 push 会直接失败并跳过后面的钉钉推送（2026-11-02 就这么漏发的）。
+          ok=0
+          for i in 1 2 3; do
+            git fetch -q origin main
+            git reset -q --hard origin/main
+            mkdir -p reports
+            cp -f output/report_*.png reports/
+            # 只保留最近 14 天（3 张 × 14 天 = 42 张），避免仓库无限膨胀
+            ls -1t reports/*.png 2>/dev/null | tail -n +43 | xargs -r rm -f
+            git add -A reports
+            if git diff --cached --quiet; then
+              echo "第 $i 次：远端已有这些图，无需提交"
+              ok=1
+              break
+            fi
+            git commit -q -m "日报图 $(date +%F)"
+            if git push -q origin main; then
+              echo "第 $i 次：推送成功"
+              ok=1
+              break
+            fi
+            echo "第 $i 次推送被拒，5 秒后重试…"
+            sleep 5
+          done
+          if [ "$ok" != "1" ]; then
+            echo "::error::图片没能提交到仓库，CDN 取不到图，本次不发"
+            exit 1
           fi
+
           # 变量名必须与 push_cloud.py 读取的 IMAGE_SHA 完全一致。
-          # 且必须用提交后的真实 sha：此时 GITHUB_SHA 还指向提交前的旧 commit，
-          # 拿它拼 CDN 地址会 404。
+          # 且必须是图片已存在的那个 commit：GITHUB_SHA 指向的是提交前的旧 commit，拿它拼 CDN 会 404。
           echo "IMAGE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
           echo "reports 目录现有 $(ls -1 reports/*.png | wc -l) 张图"
 
@@ -78,3 +106,12 @@ jobs:
           else
             python cloud/push_cloud.py
           fi
+
+      # 任何一步失败都要出声音，否则就是"群里没收到、也没人知道"
+      - name: 失败告警
+        if: failure()
+        env:
+          DINGTALK_WEBHOOK_TOKEN: ${{ secrets.DINGTALK_WEBHOOK_TOKEN }}
+          DINGTALK_WEBHOOK_SECRET: ${{ secrets.DINGTALK_WEBHOOK_SECRET }}
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python cloud/alert.py

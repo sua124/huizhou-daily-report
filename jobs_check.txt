@@ -1,0 +1,12 @@
+job daily failure
+   - Set up job | completed success
+   - Run actions/checkout@v4 | completed success
+   - 安装中文字体 | completed success
+   - Run actions/setup-python@v5 | completed success
+   - 安装依赖 | completed success
+   - 生成日报图 | completed success
+   - 归档图片供 CDN 分发 | completed failure
+   - 推送到钉钉群 | completed skipped
+   - Post Run actions/setup-python@v5 | completed skipped
+   - Post Run actions/checkout@v4 | completed success
+   - Complete job | completed success

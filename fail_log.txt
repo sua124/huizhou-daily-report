@@ -1,0 +1,43 @@
+FILE: 0_daily.txt
+5472506Z [36;1melse[0m
+2026-11-02T14:52:34.5472692Z [36;1m  git commit -m "日报图 $(date +%F)"[0m
+2026-11-02T14:52:34.5472920Z [36;1m  git push[0m
+2026-11-02T14:52:34.5473094Z [36;1mfi[0m
+2026-11-02T14:52:34.5473317Z [36;1m# 变量名必须与 push_cloud.py 读取的 IMAGE_SHA 完全一致。[0m
+2026-11-02T14:52:34.5473634Z [36;1m# 且必须用提交后的真实 sha：此时 GITHUB_SHA 还指向提交前的旧 commit，[0m
+2026-11-02T14:52:34.5473901Z [36;1m# 拿它拼 CDN 地址会 404。[0m
+2026-11-02T14:52:34.5474153Z [36;1mecho "IMAGE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"[0m
+2026-11-02T14:52:34.5474487Z [36;1mecho "reports 目录现有 $(ls -1 reports/*.png | wc -l) 张图"[0m
+2026-11-02T14:52:34.5502096Z shell: /usr/bin/bash -e {0}
+2026-11-02T14:52:34.5502310Z env:
+2026-11-02T14:52:34.5502557Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.15/x64
+2026-11-02T14:52:34.5502914Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.15/x64/lib/pkgconfig
+2026-11-02T14:52:34.5503256Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.15/x64
+2026-11-02T14:52:34.5503566Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.15/x64
+2026-11-02T14:52:34.5503874Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.15/x64
+2026-11-02T14:52:34.5504176Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.15/x64/lib
+2026-11-02T14:52:34.5504451Z ##[endgroup]
+2026-11-02T14:52:34.6026503Z [main be73fe9] 日报图 2026-11-02
+2026-11-02T14:52:34.6026846Z  3 files changed, 0 insertions(+), 0 deletions(-)
+2026-11-02T14:52:36.3909018Z To https://github.com/sua124/huizhou-daily-report
+2026-11-02T14:52:36.3910079Z  ! [remote rejected] main -> main (cannot lock ref 'refs/heads/main': is at be73fe9090341d9968bd533cff780abe3928fb20 but expected 99fa9ddf3314df35f2ad392013d5e49cba674291)
+2026-11-02T14:52:36.3911225Z error: failed to push some refs to 'https://github.com/sua124/huizhou-daily-report'
+2026-11-02T14:52:36.3936987Z ##[error]Process completed with exit code 1.
+2026-11-02T14:52:36.4079898Z Post job cleanup.
+2026-11-02T14:52:36.4823824Z [command]/usr/bin/git version
+2026-11-02T14:52:36.4849796Z git version 2.56.0
+2026-11-02T14:52:36.4884099Z Temporarily overriding HOME='/home/runner/work/_temp/6022bdbe-4815-499d-b713-8bcf249e4143' before making global git config changes
+2026-11-02T14:52:36.4885259Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-02T14:52:36.4889486Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/huizhou-daily-report/huizhou-daily-report
+2026-11-02T14:52:36.4931616Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-02T14:52:36.4967895Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-02T14:52:36.5241280Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-02T14:52:36.5268136Z http.https://github.com/.extraheader
+2026-11-02T14:52:36.5277580Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-11-02T14:52:36.5317411Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-02T14:52:36.5631866Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-02T14:52:36.5663994Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-02T14:52:36.6051402Z Cleaning up orphan processes
+2026-11-02T14:52:36.6356606Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-python@v5. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+
+FILE: daily/system.txt
