@@ -55,8 +55,12 @@ def public_url(basename, base):
     return f"{base}/{urllib.parse.quote(basename)}"
 
 
-def wait_reachable(url, tries=15, wait=10, verbose=True):
-    """jsDelivr 首次拉取新文件需要一点时间，这里轮询直到可访问"""
+def wait_reachable(url, tries=24, wait=10, verbose=True):
+    """jsDelivr 首次拉取新文件需要一点时间，这里轮询直到可访问
+
+    tries*wait = 240 秒。实测新 commit 一般 10~60 秒可拉，偶尔更久；
+    以前 150 秒就放弃，会白白丢掉一张图，所以放宽到 4 分钟。
+    """
     for i in range(tries):
         try:
             req = urllib.request.Request(url, method="HEAD")
@@ -94,11 +98,28 @@ def send_markdown(title, text, at_mobiles=None, at_user_ids=None):
         at["atUserIds"] = at_user_ids
     body["at"] = at
 
-    req = urllib.request.Request(
-        url, data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
-        headers={"Content-Type": "application/json;charset=utf-8"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.loads(r.read().decode("utf-8"))
+    payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    res = {}
+    # 钉钉偶发超时/限流（130101=发送过快），重发一次基本就能过；
+    # 这里失败会导致某张图缺失，进而整次运行判失败，值得重试。
+    for i in range(3):
+        req = urllib.request.Request(
+            url, data=payload,
+            headers={"Content-Type": "application/json;charset=utf-8"})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                res = json.loads(r.read().decode("utf-8"))
+        except Exception as e:
+            res = {"errcode": -1, "errmsg": f"{type(e).__name__}: {e}"}
+        if res.get("errcode") == 0:
+            return res
+        if res.get("errcode") in (-1, 130101) and i < 2:
+            wait = 3 * (i + 1)
+            print(f"  发送失败（{res.get('errmsg') or res.get('errcode')}），{wait}s 后重试")
+            time.sleep(wait)
+            continue
+        return res
+    return res
 
 
 def push(date=None, dry_run=False):

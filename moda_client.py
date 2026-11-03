@@ -47,6 +47,7 @@ def _cfg():
 _C = _cfg()
 BASE = _C.get("moda", {}).get("base_url", "https://moda.xjr2018.com")
 TOKEN_FILE = os.path.join(TOOLS, "token.json")
+RETRY = 3  # 网络抖动重试次数
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36"
 
 ACCOUNT = _C.get("moda", {}).get("account", "")
@@ -79,16 +80,33 @@ class ModaClient:
         json.dump({"token": token, "exp": exp}, open(TOKEN_FILE, "w", encoding="utf-8"))
 
     def _raw(self, path, data, headers):
-        req = urllib.request.Request(
-            BASE + path, data=json.dumps(data).encode(), headers=headers, method="POST"
-        )
-        try:
-            with self.opener.open(req, timeout=60) as r:
-                return json.loads(r.read().decode("utf-8", "ignore"))
-        except urllib.error.HTTPError as e:
-            return {"code": -1, "_http": e.code, "_body": e.read().decode("utf-8", "ignore")[:300]}
-        except Exception as e:
-            return {"code": -1, "_err": f"{type(e).__name__}: {e}"}
+        """单次请求 + 抗抖动重试。
+
+        云端 runner 到后台的链路偶发 ConnectionReset / 超时，以前一次抖动就整份日报作废。
+        这里只对「暂时性错误」（网络异常、5xx、429）重试 3 次（2s/4s/8s 退避）；
+        业务错误（4xx、返回体里的 code!=1）立即返回，不做无意义重试。
+        这些接口都是只读查询，重试不会产生副作用。
+        """
+        body = json.dumps(data).encode()
+        last = None
+        for i in range(RETRY):
+            req = urllib.request.Request(BASE + path, data=body, headers=headers, method="POST")
+            try:
+                with self.opener.open(req, timeout=60) as r:
+                    return json.loads(r.read().decode("utf-8", "ignore"))
+            except urllib.error.HTTPError as e:
+                txt = e.read().decode("utf-8", "ignore")[:300]
+                last = {"code": -1, "_http": e.code, "_body": txt}
+                if e.code < 500 and e.code != 429:
+                    return last
+            except Exception as e:
+                last = {"code": -1, "_err": f"{type(e).__name__}: {e}"}
+            if i < RETRY - 1:
+                delay = 2 ** (i + 1)
+                why = last.get("_err") or f"HTTP {last.get('_http')}"
+                print(f"  [重试] {path} 暂时失败（{why}），{delay}s 后第 {i + 2}/{RETRY} 次")
+                time.sleep(delay)
+        return last
 
     def login(self):
         h = {
@@ -101,7 +119,10 @@ class ModaClient:
         r = self._raw("/admin/login/login",
                       {"account": self.account, "password": self.password}, h)
         if r.get("code") != 1:
-            raise RuntimeError(f"登录失败(检查 config.json 账号密码): {r}")
+            # 区分「网络打不通」和「账号密码错」，否则排障时会误判
+            if r.get("_err") or r.get("_http"):
+                raise RuntimeError(f"登录请求失败（网络/服务端问题，已重试 {RETRY} 次）: {r}")
+            raise RuntimeError(f"登录失败（账号或密码不对）: {r}")
         self.token = r["data"]["token"]
         self._save_token(self.token, r["data"].get("exp", int(time.time()) + 3600))
         return self.token
