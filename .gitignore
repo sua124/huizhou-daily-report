@@ -5,16 +5,15 @@ config_local.json
 bots.json
 bots.err
 cloud/.creds.json
-deploy_out.txt
-api_out.txt
-tasks_result.txt
-verify_01.png
 
 # 运行产物（reports/ 要提交，它是给 CDN 分发图片用的，不能忽略）
 data/
 output/
 daily.log
 run.log
+
+# 排查用的临时输出
+*.txt
 
 # Python
 __pycache__/
