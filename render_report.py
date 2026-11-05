@@ -749,43 +749,34 @@ def build_timeout(rows, out_path, store_label="13店（正佳广场店）"):
             dr.text((cx, base + 158), f"{h}时", font=F(15), fill=INK3, anchor="ma")
         c.y = base + 196
 
-    # 传菜时效（老板指定跟踪项：出品慢 2 道但上桌慢 70+ 道，慢在传菜环节）
+    # 传菜超时（老板指定：与后台「传菜统计」同口径，只列 3 分钟以上传菜数量）
     dv = last.get("delivery") or {}
     if dv.get("total"):
-        c.section(f"传菜时效（出品完成 → 上桌，>{LATE_MIN} 分为慢）", gap=18)
-        c.kpi_row([
-            ("传菜道数·堂食", f"{dv['total']:,}",
-             f"中位 {dv.get('median', 0)} 分 · 最长 {dv.get('max', 0)} 分", INK),
-            ("慢传道数", f"{dv.get('late', 0):,}",
-             f"出品后超 {LATE_MIN} 分未上桌", UP if dv.get("late") else INK),
-            ("慢传率", f"{dv.get('rate', 0):.2f}%",
-             f"对照出品超时率 {ts.get('rate', 0):.2f}%", ACCENT),
-            ("平均传菜时长", f"{dv.get('avg', 0):.1f} 分",
-             "出品完成 → 送到桌", INK),
-        ], big=False)
-
-        tops = dv.get("top") or []
-        if tops:
-            c.section("慢传 TOP（含单号，可直接查单）", gap=10)
-            for i, t in enumerate(tops[:8]):
-                nm = t["name"]
-                if len(nm) > 16:
-                    nm = nm[:15] + "…"
-                over_by = t["mins"] + (t["secs"] % 60) / 60 - LATE_MIN
-                badge_c = "#C0392B" if over_by >= 4 else ("#E8A87C" if over_by >= 2 else "#9FBFD9")
-                dr.ellipse([PAD + 4, c.y + 3, PAD + 30, c.y + 29], fill=badge_c)
-                dr.text((PAD + 17, c.y + 16), str(i + 1), font=F(16, True),
-                        fill="#FFFFFF", anchor="mm")
-                dr.text((PAD + 42, c.y + 2), nm, font=F(21), fill=INK)
-                mins_f = t["secs"] / 60
-                dr.text((W - PAD - 8, c.y + 2), f"{mins_f:.1f} 分",
-                        font=F(22, True), fill=UP, anchor="ra")
-                dr.text((PAD + 42, c.y + 32),
-                        f"单 {t['order_id']} · {t['dish_up']} 出品 → {t['delivered']} 上桌",
-                        font=F(17), fill=INK3)
-                dr.line([PAD, c.y + 58, W - PAD, c.y + 58], fill=LINE, width=1)
-                c.y += 60
-            c.y += 6
+        c.section(f"传菜超时（出品完成 → 上桌 >{LATE_MIN} 分，按菜品）", gap=18)
+        c.note(f"共 {dv.get('late', 0)} / {dv['total']:,} 道超 {LATE_MIN} 分钟才上桌"
+               f"（{dv.get('rate', 0):.1f}%）· 与后台「传菜统计」同口径", size=18)
+        # 表头
+        hy = c.y + 4
+        dr.text((PAD + 42, hy), "菜品", font=F(18, True), fill=INK3)
+        dr.text((W - PAD - 150, hy), "3分钟以上", font=F(18, True), fill=INK3, anchor="ra")
+        dr.text((W - PAD - 8, hy), "超时占比", font=F(18, True), fill=INK3, anchor="ra")
+        c.y += 40
+        for i, b in enumerate((dv.get("by_name") or [])[:12]):
+            nm = b["name"]
+            if len(nm) > 15:
+                nm = nm[:14] + "…"
+            badge_c = "#C0392B" if b["ratio"] >= 60 else ("#E8A87C" if b["ratio"] >= 40 else "#9FBFD9")
+            dr.ellipse([PAD + 4, c.y + 2, PAD + 28, c.y + 26], fill=badge_c)
+            dr.text((PAD + 16, c.y + 14), str(i + 1), font=F(14, True),
+                    fill="#FFFFFF", anchor="mm")
+            dr.text((PAD + 42, c.y), nm, font=F(20), fill=INK)
+            dr.text((W - PAD - 150, c.y), f"{b['late']} 道", font=F(21, True),
+                    fill=UP, anchor="ra")
+            dr.text((W - PAD - 8, c.y + 1), f"{b['ratio']:.1f}%",
+                    font=F(19), fill=INK2, anchor="ra")
+            dr.line([PAD, c.y + 36, W - PAD, c.y + 36], fill=LINE, width=1)
+            c.y += 40
+        c.y += 8
 
     # 口径
     c.footer([
@@ -793,8 +784,8 @@ def build_timeout(rows, out_path, store_label="13店（正佳广场店）"):
         f"外卖超 {thr_take} 分计为超时；按菜品道数计数",
         (f"已剔除 {' / '.join(ts.get('excluded_names') or [])} 共 {ts.get('excluded', 0)} 道"
          f"（制作工艺特殊，计入会失真）") if ts.get("excluded") else "",
-        f"传菜时效口径：出品完成 → 传菜完成（仅堂食），超 {LATE_MIN} 分计为慢传，"
-        "慢传=出品后传菜/上桌环节拖慢",
+        f"传菜口径：出品完成 → 上桌，超 {LATE_MIN} 分钟计为超时，按菜品列 3 分钟以上传菜数量"
+        "（与后台「传菜统计」一致）",
         "数据源：摩打后台 · 出品统计（kdsStatis）/ 传菜统计（deliverStatistics）",
         f"生成时间 {datetime.datetime.now():%Y-%m-%d %H:%M}",
     ])

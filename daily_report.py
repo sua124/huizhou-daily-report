@@ -131,9 +131,8 @@ def pull(target_date=None, lookback=14):
             kd = pull_sale_operate(c, ds, STORE_ID)
         except Exception:
             kd = {"served": 0, "recall": 0, "total": 0, "recalls": []}
-        # 传菜时效（下单→传菜完成，>20 分钟为慢；仅堂食口径，只在目标日拉）
-        dv = {"total": 0, "late": 0, "rate": 0, "avg": 0, "median": 0, "max": 0,
-              "top": [], "peak": []}
+        # 传菜超时（出品→上桌>3分，按菜品列 3 分钟以上数量；与后台传菜统计同口径，仅目标日拉）
+        dv = {"total": 0, "late": 0, "rate": 0, "by_name": []}
         if ds == tgt.isoformat():
             try:
                 dv = delivery_stats(ds, STORE_ID)
