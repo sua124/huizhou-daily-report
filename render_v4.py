@@ -160,13 +160,13 @@ class Page:
 
 
 def _timeout_peak(ts):
-    """超时高峰时段文案。peak 是 [(小时, 超时菜道数), ...]"""
-    peak = ts.get("peak") or []
+    """超时高峰时段文案。peak_over 是 [(小时, 超时菜道数), ...]"""
+    peak = ts.get("peak_over") or []
     if not peak:
         return "-", "无超时"
     hour, cnt = max(peak, key=lambda z: z[1])
-    total = sum(n for _, n in peak) or 1
-    sub = f"{cnt} 道 · 占 {cnt / total * 100:.0f}%"
+    total = ts.get("timeout") or 1
+    sub = f"{cnt} 道 · 占超时 {cnt / total * 100:.0f}%"
     return f"{hour:02d}:00—{hour + 1:02d}:00", sub
 
 
@@ -231,18 +231,21 @@ def build_page(rows, out_path, store_label="惠州店",
     ts = last.get("timeout") or {}
     prev_ts = (prev or {}).get("timeout") or {}
     peak_txt, peak_sub = _timeout_peak(ts)
-    over_chg, _ = chg(ts.get("timeout_orders", 0), prev_ts.get("timeout_orders") or None)
+    thr_dine = ts.get("thr_dine", 20)
+    thr_take = ts.get("thr_take", 15)
+    over_chg, _ = chg(ts.get("timeout", 0), prev_ts.get("timeout") or None)
     out_chg, _ = chg(ts.get("total", 0), prev_ts.get("total") or None)
 
-    p.section("超时分析")
+    p.section("出品超时")
     p.cards([
         {"label": "出品数量", "value": f"{ts.get('total', 0):,}",
          "sub": f"菜品道数 · {out_chg}"},
-        {"label": "超时单总数", "value": f"{ts.get('timeout_orders', 0)}",
-         "sub": f">20 分钟 · {over_chg}"},
+        {"label": "超时出品数", "value": f"{ts.get('timeout', 0)}",
+         "color": UP if ts.get("timeout") else INK,
+         "sub": f"堂食>{thr_dine}分/外卖>{thr_take}分 · {over_chg}"},
         {"label": "超时占比", "value": f"{ts.get('rate', 0):.2f}%",
          "color": UP if ts.get("rate", 0) > 3 else INK,
-         "sub": f"{ts.get('timeout', 0)} 道超时"},
+         "sub": f"平均出品 {(ts.get('dine') or {}).get('avg', 0):.1f} 分（堂食）"},
         {"label": "超时高峰时段", "value": peak_txt, "sub": peak_sub},
     ], cols=4, height=122)
 
@@ -324,7 +327,8 @@ def build_page(rows, out_path, store_label="惠州店",
                      f"{sum_p - sum_t:+,.2f}" if sum_t else "-"],
             colors=color2)
 
-    p.note("说明：营业额、目标达成均按实收口径；损耗取后台报损单；超时按订单下单→传菜完成 >20 分钟。",
+    p.note("说明：营业额、目标达成均按实收口径；损耗取后台报损单；超时按 KDS 出品时长，"
+           "堂食 >20 分、外卖 >15 分。",
            gap=6)
     p.note(f"生成时间 {datetime.datetime.now():%Y-%m-%d %H:%M} · 数据来源 摩打后台", gap=0)
     return p.save(out_path)

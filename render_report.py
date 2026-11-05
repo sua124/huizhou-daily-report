@@ -597,36 +597,66 @@ def build_timeout(rows, out_path, store_label="13店（正佳广场店）"):
     c = Canvas(last, store_label, 3, "出品超时")
     dr = c.dr
     ts = last.get("timeout") or {}
-    thr = ts.get("threshold", 20)
 
     if not ts.get("total"):
         c.section("出品超时")
-        c.note("当日无传菜记录", size=22)
+        c.note("当日无出品记录", size=22)
         c.footer([
             "数据源：摩打后台 · 出品统计",
             f"生成时间 {datetime.datetime.now():%Y-%m-%d %H:%M}",
         ])
         return c.save(out_path)
 
-    c.section(f"出品超时（>{thr} 分钟）")
+    thr_dine = ts.get("thr_dine", 20)
+    thr_take = ts.get("thr_take", 15)
+    dn = ts.get("dine") or {}
+    tk = ts.get("take") or {}
+
+    c.section(f"出品超时（堂食 >{thr_dine} 分 / 外卖 >{thr_take} 分）")
     c.kpi_row([
         ("出品总道数", f"{ts['total']:,}",
-         f"{ts.get('orders', 0)} 单 · 单均 {ts['total']/max(ts.get('orders',1),1):.1f} 道", INK),
+         f"堂食 {dn.get('total', 0)} · 外卖 {tk.get('total', 0)}", INK),
         ("超时道数", f"{ts['timeout']:,}",
-         f"涉及 {ts.get('timeout_orders', 0)} 单", UP if ts["timeout"] else INK),
-        ("超时率", f"{ts['rate']:.1f}%",
-         f"标杆 ≤{thr} 分钟", UP if ts["rate"] > 10 else ACCENT),
-        ("平均出品时长", f"{ts['avg']:.0f} 分",
-         f"中位 {ts.get('median', 0)} 分 · 最长 {ts.get('max', 0)} 分", INK),
+         f"堂食 {dn.get('timeout', 0)} 道 · 外卖 {tk.get('timeout', 0)} 道",
+         UP if ts["timeout"] else INK),
+        ("超时率", f"{ts['rate']:.2f}%",
+         f"堂食 {dn.get('rate', 0):.2f}% · 外卖 {tk.get('rate', 0):.2f}%",
+         UP if ts["rate"] > 3 else ACCENT),
+        ("平均出品时长", f"{ts['avg']:.1f} 分",
+         f"中位 {ts.get('median', 0):.1f} 分 · 最长 {ts.get('max', 0)} 分", INK),
     ], big=False)
+
+    # 堂食 / 外卖 出品效率对比（KDS 无订单号，按渠道拆开看更有意义）
+    if dn.get("total") or tk.get("total"):
+        c.section("堂食 / 外卖 出品效率", gap=8)
+        cw = W - PAD * 2
+        x_dine, x_take = PAD + cw * 0.56, PAD + cw * 0.82
+        dr.text((x_dine, c.y), "堂食", font=F(18, True), fill=INK3, anchor="ra")
+        dr.text((x_take, c.y), "外卖", font=F(18, True), fill=INK3, anchor="ra")
+        c.y += 32
+        cmps = [
+            ("出品道数", f"{dn.get('total', 0)}", f"{tk.get('total', 0)}"),
+            ("平均出品", f"{dn.get('avg', 0):.1f} 分", f"{tk.get('avg', 0):.1f} 分"),
+            ("中位出品", f"{dn.get('median', 0):.1f} 分", f"{tk.get('median', 0):.1f} 分"),
+            ("最长出品", f"{dn.get('max', 0)} 分", f"{tk.get('max', 0)} 分"),
+            ("超时道数", f"{dn.get('timeout', 0)}", f"{tk.get('timeout', 0)}"),
+            ("超时率", f"{dn.get('rate', 0):.2f}%", f"{tk.get('rate', 0):.2f}%"),
+        ]
+        for label, a, b in cmps:
+            dr.text((PAD, c.y + 5), label, font=F(19), fill=INK2)
+            dr.text((x_dine, c.y), a, font=F(20, True), fill=INK, anchor="ra")
+            dr.text((x_take, c.y), b, font=F(20, True), fill=INK, anchor="ra")
+            dr.line([PAD, c.y + 34, W - PAD, c.y + 34], fill=LINE, width=1)
+            c.y += 38
+        c.y += 12
 
     # 时长分布
     bk = ts.get("buckets") or {}
-    segs = [("≤10 分", bk.get("≤10", 0), "#9FBFD9"),
-            ("11-20 分", bk.get("11-20", 0), "#5B8DB8"),
-            ("21-30 分", bk.get("21-30", 0), "#E8A87C"),
-            ("31-60 分", bk.get("31-60", 0), "#D98880"),
-            (">60 分", bk.get(">60", 0), "#C0392B")]
+    segs = [("≤5 分", bk.get("≤5", 0), "#9FBFD9"),
+            ("6-10 分", bk.get("6-10", 0), "#5B8DB8"),
+            ("11-15 分", bk.get("11-15", 0), "#7FA8C9"),
+            ("16-20 分", bk.get("16-20", 0), "#E8A87C"),
+            (">20 分", bk.get(">20", 0), "#C0392B")]
     tot_all = sum(v for _, v, _ in segs) or 1
     bx, by, bw, bh = PAD, c.y + 6, W - PAD * 2, 40
     dr.rounded_rectangle([bx, by, bx + bw, by + bh], 6, fill=CARD)
@@ -649,20 +679,24 @@ def build_timeout(rows, out_path, store_label="13店（正佳广场店）"):
     tops = ts.get("top") or []
     if tops:
         c.section("超时最久 TOP 10", gap=10)
-        c.note("同一单只取最慢一道，避免一单多菜霸榜", size=18)
+        c.note("KDS 出品记录不含订单号，按菜品 + 出品时段定位", size=18)
         for i, t in enumerate(tops[:10]):
             nm = t["name"]
             if len(nm) > 18:
                 nm = nm[:17] + "…"
-            badge_c = "#C0392B" if t["mins"] > 60 else ("#E8A87C" if t["mins"] > 30 else "#9FBFD9")
+            mins = t.get("exact", t["mins"])
+            over_by = mins - (t.get("limit") or thr_dine)
+            badge_c = "#C0392B" if over_by >= 10 else ("#E8A87C" if over_by >= 5 else "#9FBFD9")
             dr.ellipse([PAD + 4, c.y + 3, PAD + 30, c.y + 29], fill=badge_c)
             dr.text((PAD + 17, c.y + 16), str(i + 1), font=F(16, True),
                     fill="#FFFFFF", anchor="mm")
             dr.text((PAD + 42, c.y + 4), nm, font=F(21), fill=INK)
-            dr.text((W - PAD - 8, c.y + 4), f"{t['mins']} 分", font=F(22, True),
-                    fill=UP if t["mins"] > 60 else INK, anchor="ra")
+            dr.text((W - PAD - 8, c.y + 4), f"{mins:.1f} 分", font=F(22, True),
+                    fill=UP, anchor="ra")
+            hr = t.get("hour")
+            when = f"{hr:02d}:00 时段" if isinstance(hr, (int, float)) else "时段未知"
             dr.text((PAD + 42, c.y + 32),
-                    f"{t['created']} → {t['delivered']}　单号 {t['order_id']}",
+                    f"{t.get('kind_name', '堂食')} · {when} · 红线 {t.get('limit', thr_dine)} 分",
                     font=F(17), fill=INK3)
             dr.line([PAD, c.y + 58, W - PAD, c.y + 58], fill=LINE, width=1)
             c.y += 60
@@ -680,38 +714,46 @@ def build_timeout(rows, out_path, store_label="13店（正佳广场店）"):
             if len(nm) > 10:
                 nm = nm[:9] + "…"
             dr.text((rx, ry), nm, font=F(19), fill=INK)
-            dr.text((rx + col_w - 130, ry), f"{b['cnt']} 道", font=F(18),
+            dr.text((rx + col_w - 210, ry), f"{b['cnt']} 道", font=F(18),
                     fill=INK3, anchor="ra")
-            dr.text((rx + col_w - 68, ry), f"均{b['avg']:.0f}", font=F(18),
+            dr.text((rx + col_w - 130, ry), f"均{b['avg']:.1f}", font=F(18),
                     fill=INK2, anchor="ra")
             dr.text((rx + col_w - 10, ry), f"最长 {b['max']} 分",
                     font=F(18, True), fill=UP, anchor="ra")
         c.y += ((len(bn[:6]) + 1) // 2) * 40 + 16
 
-    # 超时时段分布
+    # 出品时段分布（全部出品道数，超时部分标红）
     peak = ts.get("peak") or []
+    over_map = dict(ts.get("peak_over") or [])
     if peak:
-        c.section("超时时段分布", gap=10)
+        c.section("出品时段分布", gap=10)
+        c.note("柱高 = 该时段出品道数，红色段为其中超时的道数", size=18)
         pmax = max(v for _, v in peak) or 1
-        col_w = (W - PAD * 2) // max(len(peak), 1)
+        base = c.y + 20
+        slot = (W - PAD * 2) / max(len(peak), 1)
+        bar_w = min(slot * 0.62, 46)
         for i, (h, v) in enumerate(peak):
-            x = PAD + i * col_w
-            hbar = int(140 * v / pmax)
-            dr.rounded_rectangle([x + col_w * 0.2, c.y + 140 - hbar,
-                                  x + col_w * 0.8, c.y + 140], 3,
-                                 fill=UP if v >= pmax * 0.8 else "#A9C4DC")
-            dr.text((x + col_w / 2, c.y + 140 - hbar - 24), str(v), font=F(17, True),
-                    fill=INK, anchor="ma")
-            dr.text((x + col_w / 2, c.y + 146), f"{h}时", font=F(16),
-                    fill=INK3, anchor="ma")
-        c.y += 186
+            cx = PAD + i * slot + slot / 2
+            hbar = max(int(130 * v / pmax), 3)
+            top = base + 150 - hbar
+            dr.rounded_rectangle([cx - bar_w / 2, top, cx + bar_w / 2, base + 150],
+                                 3, fill="#A9C4DC")
+            ov = over_map.get(h, 0)
+            if ov:
+                oh = max(int(130 * ov / pmax), 6)
+                dr.rounded_rectangle([cx - bar_w / 2, base + 150 - oh,
+                                      cx + bar_w / 2, base + 150], 3, fill=UP)
+            dr.text((cx, top - 22), str(v), font=F(16, True), fill=INK, anchor="ma")
+            dr.text((cx, base + 158), f"{h}时", font=F(15), fill=INK3, anchor="ma")
+        c.y = base + 196
 
     # 口径
     c.footer([
-        f"口径：下单时间 → 传菜完成时间，超过 {thr} 分钟计为超时；同一单多道菜分别计数",
+        f"口径：下单 → 菜品出品完成（KDS 出品记录），堂食超 {thr_dine} 分、"
+        f"外卖超 {thr_take} 分计为超时；按菜品道数计数",
         (f"已剔除 {' / '.join(ts.get('excluded_names') or [])} 共 {ts.get('excluded', 0)} 道"
          f"（制作工艺特殊，计入会失真）") if ts.get("excluded") else "",
-        "数据源：摩打后台 · 出品统计",
+        "数据源：摩打后台 · 出品统计（kdsStatis）",
         f"生成时间 {datetime.datetime.now():%Y-%m-%d %H:%M}",
     ])
     return c.save(out_path)
