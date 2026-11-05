@@ -1,13 +1,14 @@
-"""传菜时效统计（老板拍板新增的跟踪项）
-口径：下单 created_at → 传菜完成 deliver_at，超过 20 分钟记为慢单
+"""传菜时效统计（老板拍板新增的跟踪项，2026-11-05 定稿口径）
+口径：出品完成 dish_up_at → 传菜完成 deliver_at，超过 3 分钟记为慢传
+      （即纯传菜/上桌环节，不含厨房出品时间；出品环节另看出品超时图）
 数据源：/admin/food_analysis/deliverStatistics（注意：该接口只含堂食）
-背景：11-04 对比发现出品口径只超 2 道而传菜口径超 34 道 —— 慢在传菜环节，不在厨房
+背景：出品口径仅 2 道超时，而传菜环节 3 分钟红线有 75 道 —— 慢在上桌，不在厨房
 """
 import datetime
 from collections import Counter
 from moda_client import ModaClient
 
-LATE_MIN = 20
+LATE_MIN = 3
 # 与出品口径一致：制作工艺特殊/挂单口径问题的菜品不计入
 EXCLUDE_KEYWORDS = ["三文鱼粥", "寿司包", "豆乳芝士"]
 
@@ -25,20 +26,22 @@ def delivery_stats(ds, store_id, limit=3000):
     items = []
     for x in lst:
         try:
-            t0 = _dt(x["created_at"])
-            t1 = _dt(x["deliver_at"])
+            t_up = _dt(x["dish_up_at"])
+            t_dl = _dt(x["deliver_at"])
         except Exception:
             continue
         name = (x.get("name") or "").strip()
         if any(k in name for k in EXCLUDE_KEYWORDS):
             continue
-        secs = int((t1 - t0).total_seconds())
+        secs = int((t_dl - t_up).total_seconds())
+        if secs < 0:
+            continue
         items.append({
             "order_id": x.get("order_id"),
             "name": name,
             "mins": secs // 60,
             "secs": secs,
-            "created": x["created_at"][11:16],
+            "dish_up": x["dish_up_at"][11:16],
             "delivered": x["deliver_at"][11:16],
         })
 
@@ -50,7 +53,7 @@ def delivery_stats(ds, store_id, limit=3000):
     mins = sorted(i["mins"] for i in items)
     late = [i for i in items if i["mins"] > LATE_MIN]
     late.sort(key=lambda i: -i["secs"])
-    peak = Counter(int(i["created"][:2]) for i in late)
+    peak = Counter(int(i["dish_up"][:2]) for i in late)
 
     return {
         "total": n,
