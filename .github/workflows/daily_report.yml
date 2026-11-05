@@ -38,11 +38,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 安装中文字体
+      - name: 准备中文字体
+        # 2026-11-05：apt 卡了 15 分钟把整条流水线堵死（concurrency 又会阻塞后面的 run），
+        # 所以这里改成：有字体就跳过、apt 带超时、失败了用 GitHub 直连兜底，绝不让渲染断掉。
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y fonts-noto-cjk
-          fc-list | grep -i cjk | head -3
+          if fc-list 2>/dev/null | grep -qiE 'Noto Sans CJK|Source Han|WenQuanYi'; then
+            echo "镜像已自带中文字体，跳过安装"
+          else
+            sudo apt-get update -qq -o Acquire::http::Timeout=25 -o Acquire::Retries=2 || true
+            sudo timeout 240 apt-get install -y --no-install-recommends fonts-noto-cjk \
+              || echo "::warning::apt 安装字体失败，改用直连下载"
+          fi
+          if ! fc-list 2>/dev/null | grep -qiE 'Noto Sans CJK|Source Han'; then
+            mkdir -p ~/.fonts
+            curl -fsSL --max-time 180 -o ~/.fonts/NotoSansSC.otf \
+              "https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Sans/SubsetOTF/SC/NotoSansSC-Regular.otf" \
+              || echo "::warning::字体兜底下载也失败"
+            fc-cache -f >/dev/null 2>&1 || true
+          fi
+          fc-list | grep -i cjk | head -3 || echo "::warning::未检测到 CJK 字体，渲染可能缺字"
 
       - uses: actions/setup-python@v5
         with:
