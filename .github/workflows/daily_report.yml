@@ -97,6 +97,8 @@ jobs:
 
       - name: 今日是否已推送（幂等锁，防重复发群）
         id: dup
+        # dry_run 试跑不走锁：目的就是验证生成环节，锁反而会把它跳过
+        if: github.event.inputs.dry_run != 'true'
         run: |
           DAY=$(TZ=Asia/Shanghai date +%F)
           if [ -n "${{ github.event.inputs.date }}" ]; then DAY="${{ github.event.inputs.date }}"; fi
