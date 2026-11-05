@@ -4,25 +4,27 @@ on:
   schedule:
     # GitHub Actions 的 cron 一律用 UTC。北京时间 = UTC + 8
     #
-    # 为什么 cron 提前到 21 点而不是直接写 22:20：
-    #   GitHub 免费版 schedule 不是准点执行，而是把任务丢进队列，实测排队 5~48 分钟
-    #   （22:00 那批被延迟到 22:47 才开跑）。所以「cron 定几点」根本决定不了「几点到群」。
-    # 现在的做法：cron 提前 60 分钟触发，任务启动后先原地等到北京时间 22:12 再开始拉数据，
-    #   把排队延迟全部吸收进等待时间里 —— 不管排队 3 分钟还是 50 分钟，都是 22:12 开始跑。
-    # 加班/打烊：22:00 收档，22:12 拉数据保证当日流水已结完，不会少算最后一小时。
-    - cron: '5 13 * * 1-5'    # 工作日：21:05 触发，等到 22:12 开跑
-    - cron: '15 13 * * 6,0'   # 周末：  21:15 触发，等到 22:12 开跑
+    # 为什么 cron 定 20:10 却写「22:12 开跑」：
+    #   GitHub 免费版 schedule 不是准点执行 —— 它把任务丢进队列，实测延迟 5 分钟到
+    #   近 1 小时（11-04 那次 22:07 触发，run 到 22:56 才建出来，到群 23:00）。
+    #   所以 cron 定几点，决定不了群里几点收到。
+    # 现在的做法：cron 提前 2 小时触发，任务启动后原地等到北京 22:12 才开始拉数据，
+    #   把排队/延迟全部吸收进等待时间 —— 不管早到还是晚到，都是 22:12 开跑、22:20 前后到群。
+    # 22:00 收档，22:12 拉数据能保证当日流水已结完，不会少算尾段。
+    - cron: '10 12 * * 1-5'   # 工作日 20:10 触发 → 等到 22:12 开跑
+    - cron: '20 12 * * 6,0'   # 周末   20:20 触发 → 等到 22:12 开跑
   workflow_dispatch:          # 手动补跑：Actions 页面点 Run workflow
     inputs:
       date:
-        description: '日报日期 YYYY-MM-DD，留空=今天'
+        description: '日报日期 YYYY-MM-DD，留空=今天（留空会等到 22:12 再跑）'
         required: false
         default: ''
 
 permissions:
   contents: write
 
-# 同一时间只允许一个任务在跑，避免两个任务同时 git push 撞 ref 锁
+# 同一时间只允许一个任务在跑，避免两个任务同时 git push 撞 ref 锁，
+# 也保证「今日已推送」的幂等锁串行生效
 concurrency:
   group: daily-report
   cancel-in-progress: false
@@ -30,8 +32,8 @@ concurrency:
 jobs:
   daily:
     runs-on: ubuntu-latest
-    # 里面有一次最长约 67 分钟的等待（吸收 cron 排队），所以总超时要放宽
-    timeout-minutes: 100
+    # 最长约 2 小时等待（吸收 cron 延迟），所以总超时要放宽
+    timeout-minutes: 200
 
     steps:
       - uses: actions/checkout@v4
@@ -49,22 +51,22 @@ jobs:
       - name: 安装依赖
         run: pip install -r requirements.txt
 
-      - name: 等到北京时间 22:12（吸收 GitHub cron 排队延迟）
-        # 只在定时触发时等待；手动 Run workflow（含补跑历史日期）要立刻跑，不能等
-        if: github.event_name == 'schedule'
+      - name: 等到北京时间 22:12（吸收 GitHub cron 延迟）
+        # 定时触发、以及「手动跑今天」时都要等；只有补跑历史日期才立刻跑
+        if: github.event_name == 'schedule' || github.event.inputs.date == ''
         run: |
           python - <<'PY'
           import datetime, sys, time
 
           TARGET_H, TARGET_M = 14, 12          # UTC 14:12 = 北京 22:12
-          MAX_WAIT = 80 * 60                   # 等待上限，防止异常情况一直挂着
+          MAX_WAIT = 150 * 60                  # 等待上限，异常情况不无限挂
 
           now = datetime.datetime.now(datetime.timezone.utc)
           tgt = now.replace(hour=TARGET_H, minute=TARGET_M, second=0, microsecond=0)
           wait = (tgt - now).total_seconds()
 
           if wait <= 0:
-              print(f"当前 UTC {now:%H:%M}，已过目标时间，立即开始（可能排队较久）")
+              print(f"当前 UTC {now:%H:%M}，已过 22:12，立即开始（说明今天延迟较大）")
               sys.exit(0)
           if wait > MAX_WAIT:
               print(f"距目标还有 {wait/60:.0f} 分钟，超过等待上限，立即开始")
@@ -75,7 +77,22 @@ jobs:
           print(f"已到 {datetime.datetime.now(datetime.timezone.utc):%H:%M} UTC，开始拉当日数据")
           PY
 
+      - name: 今日是否已推送（幂等锁，防重复发群）
+        id: dup
+        run: |
+          DAY=$(TZ=Asia/Shanghai date +%F)
+          if [ -n "${{ github.event.inputs.date }}" ]; then DAY="${{ github.event.inputs.date }}"; fi
+          git fetch -q origin main || true
+          if git cat-file -e "origin/main:reports/.sent-$DAY" 2>/dev/null; then
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+            echo "::notice::$DAY 的日报已经推送过，本次跳过（避免群里收到两遍）"
+          else
+            echo "skip=0" >> "$GITHUB_OUTPUT"
+            echo "$DAY 尚未推送，继续"
+          fi
+
       - name: 生成日报图
+        if: steps.dup.outputs.skip != '1'
         env:
           MODA_ACCOUNT: ${{ secrets.MODA_ACCOUNT }}
           MODA_PASSWORD: ${{ secrets.MODA_PASSWORD }}
@@ -87,6 +104,7 @@ jobs:
           fi
 
       - name: 归档图片供 CDN 分发
+        if: steps.dup.outputs.skip != '1'
         run: |
           git config user.name  "daily-report-bot"
           git config user.email "bot@users.noreply.github.com"
@@ -102,13 +120,16 @@ jobs:
             cp -f output/report_*.png reports/
             # 只保留最近 14 天（3 张 × 14 天 = 42 张），避免仓库无限膨胀
             ls -1t reports/*.png 2>/dev/null | tail -n +43 | xargs -r rm -f
+            # 幂等标记：推送成功后这里会被提交，第二次运行看到就跳过
+            touch "reports/.sent-$(TZ=Asia/Shanghai date +%F)"
+            ls -1 reports/.sent-* 2>/dev/null | head -n -14 | xargs -r rm -f
             git add -A reports
             if git diff --cached --quiet; then
               echo "第 $i 次：远端已有这些图，无需提交"
               ok=1
               break
             fi
-            git commit -q -m "日报图 $(date +%F)"
+            git commit -q -m "日报图 $(TZ=Asia/Shanghai date +%F)"
             if git push -q origin main; then
               echo "第 $i 次：推送成功"
               ok=1
@@ -128,6 +149,7 @@ jobs:
           echo "reports 目录现有 $(ls -1 reports/*.png | wc -l) 张图"
 
       - name: 推送到钉钉群
+        if: steps.dup.outputs.skip != '1'
         env:
           DINGTALK_WEBHOOK_TOKEN: ${{ secrets.DINGTALK_WEBHOOK_TOKEN }}
           DINGTALK_WEBHOOK_SECRET: ${{ secrets.DINGTALK_WEBHOOK_SECRET }}
