@@ -25,6 +25,7 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from moda_client import ModaClient
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor
 
 # 分订单类型的超时红线（分钟）
 DINE_LIMIT_MIN = 20      # 堂食
@@ -57,10 +58,14 @@ def _pull_all(c, ds, store_id):
     return r.get("data") or []
 
 
-def _hour_map(c, ds, store_id):
-    """逐小时切片，返回 {记录id: 小时}。用于还原出品时段。"""
-    hm = {}
-    for h in range(24):
+def _hour_map(c, ds, store_id, workers=6):
+    """
+    逐小时切片，返回 {记录id: 小时}。用于还原出品时段。
+
+    注意：这是 24 次请求，只对「需要画时段分布的那一天」调用（见 with_hour）。
+    并发 6 路 —— 顺序跑时云端每个请求几百毫秒，24 次能把整条流水线拖到十几分钟。
+    """
+    def one(h):
         a = f"{ds} {h:02d}:00:00"
         b = f"{ds} {h:02d}:59:59"
         try:
@@ -68,15 +73,20 @@ def _hour_map(c, ds, store_id):
                 "date_arr": [a, b], "store_ids": [store_id],
             }).get("data") or []
         except Exception:
-            continue
-        for x in d:
-            hm[x.get("id")] = h
+            return h, []
+        return h, d
+
+    hm = {}
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for h, d in ex.map(one, range(24)):
+            for x in d:
+                hm[x.get("id")] = h
     return hm
 
 
-def pull_kds(ds, store_id=42, with_hour=True):
+def pull_kds(ds, store_id=42, with_hour=True, client=None):
     """拉取当日出品明细，附带订单类型与出品时长"""
-    c = ModaClient()
+    c = client or ModaClient()
     raw = _pull_all(c, ds, store_id)
     if not raw:
         return [], 0
@@ -129,8 +139,12 @@ def _branch(items):
     }
 
 
-def timeout_stats(ds, store_id=42):
-    items, dropped = pull_kds(ds, store_id)
+def timeout_stats(ds, store_id=42, with_hour=True, client=None):
+    """
+    with_hour=False 时不打那 24 次小时切片请求 —— 时段分布只有当天报表要用，
+    历史日（只用来算超时率/同比）没必要求，这是云端耗时最大的一笔开销。
+    """
+    items, dropped = pull_kds(ds, store_id, with_hour=with_hour, client=client)
     n = len(items)
     if not n:
         return {"total": 0, "timeout": 0, "rate": 0, "top": [], "by_name": [],

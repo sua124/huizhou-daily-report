@@ -19,6 +19,10 @@ on:
         description: '日报日期 YYYY-MM-DD，留空=今天（留空会等到 22:12 再跑）'
         required: false
         default: ''
+      dry_run:
+        description: '试跑（只生成图验证，不归档不推群）'
+        required: false
+        default: 'false'
 
 permissions:
   contents: write
@@ -111,14 +115,16 @@ jobs:
           MODA_ACCOUNT: ${{ secrets.MODA_ACCOUNT }}
           MODA_PASSWORD: ${{ secrets.MODA_PASSWORD }}
         run: |
-          if [ -n "${{ github.event.inputs.date }}" ]; then
-            python daily_report.py "${{ github.event.inputs.date }}"
-          else
-            python daily_report.py
-          fi
+          D="${{ github.event.inputs.date }}"
+          # 偶发网络抖动导致整份日报失败太亏，失败歇 30 秒再试一次
+          python daily_report.py $D || {
+            echo "::warning::首次生成失败，30 秒后自动重试"
+            sleep 30
+            python daily_report.py $D
+          }
 
       - name: 归档图片供 CDN 分发
-        if: steps.dup.outputs.skip != '1'
+        if: steps.dup.outputs.skip != '1' && github.event.inputs.dry_run != 'true'
         run: |
           git config user.name  "daily-report-bot"
           git config user.email "bot@users.noreply.github.com"
@@ -163,7 +169,7 @@ jobs:
           echo "reports 目录现有 $(ls -1 reports/*.png | wc -l) 张图"
 
       - name: 推送到钉钉群
-        if: steps.dup.outputs.skip != '1'
+        if: steps.dup.outputs.skip != '1' && github.event.inputs.dry_run != 'true'
         env:
           DINGTALK_WEBHOOK_TOKEN: ${{ secrets.DINGTALK_WEBHOOK_TOKEN }}
           DINGTALK_WEBHOOK_SECRET: ${{ secrets.DINGTALK_WEBHOOK_SECRET }}

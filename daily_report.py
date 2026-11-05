@@ -2,7 +2,8 @@
 拉取指定日期门店完整数据，生成三张日报图（部署包版：门店参数从 config.json 读取）
 用法: python daily_report.py [YYYY-MM-DD]  (默认今天)
 """
-import json, sys, os, datetime, time
+import json, sys, os, datetime, time, threading
+from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from moda_client import ModaClient
 from render_report import build_all
@@ -46,6 +47,18 @@ DATA = os.path.join(BASE, "data")
 OUT = os.path.join(BASE, "output")
 os.makedirs(DATA, exist_ok=True)
 os.makedirs(OUT, exist_ok=True)
+
+# 每个线程一个客户端：urllib 的 opener / cookie jar 不保证线程安全，
+# 而且 token 存在 token.json 里，多线程不会重复登录。
+_tlocal = threading.local()
+
+
+def _client():
+    c = getattr(_tlocal, "c", None)
+    if c is None:
+        c = ModaClient()
+        _tlocal.c = c
+    return c
 
 
 def pull(target_date=None, lookback=14):
@@ -93,63 +106,94 @@ def pull(target_date=None, lookback=14):
                 month_pay += float(_r.get("pay_price") or 0)
 
     rows = []
-    for ds in sorted(base_rows):
+
+    def build_row(ds):
+        """
+        抓一天的完整数据行。
+
+        性能约定（2026-11-05 加，云端曾因请求过多卡死 14 分钟）：
+        - 「今天」→ 全量：含时段切片（24 次）、传菜统计、停开售
+        - 「昨天」→ 明细类（堂食/外卖拆分、赠菜、折扣、出品超时），因为图 1 要同比
+        - 更早的历史日 → 只拉 7 日表真正用到的两个接口（营业统计 + 损耗）
+        原来每天都跑 8 个接口 + 24 次时段切片，15 天要发 500 多个请求，
+        云端（美国机器连国内后台）每个请求都慢，链路一堵就整份日报出不来。
+        """
+        c = _client()
         b = base_rows[ds]
+        is_tgt = ds == tgt.isoformat()
+        is_prev = ds == prev_day.isoformat()
+        rich = is_tgt or is_prev
+
         rr = c.post("/admin/food_analysis/businessStatistics", {
             "date_arr": [ds, ds], "store_ids": [STORE_ID],
             "type": "index", "category_type": 1,
         })
         lst = rr.get("data", {}).get("list", [])
         x = lst[0] if lst else {}
+
         # 订单类型拆解（只算已结账）
-        try:
-            sp = split_orders(ds, STORE_ID)
-        except Exception:
-            sp = {"dine_in": 0, "takeout": 0, "takeout_detail": {}}
+        sp = {"dine_in": 0, "takeout": 0, "takeout_detail": {}}
+        if rich:
+            try:
+                sp = split_orders(ds, STORE_ID)
+            except Exception:
+                pass
         # 三大外卖平台明细
-        try:
-            channels, _, dinein = channel_stats(ds, STORE_ID)
-        except Exception:
-            channels, dinein = [], {"revenue": 0, "orders": 0}
+        channels, dinein = [], {"revenue": 0, "orders": 0}
+        if rich:
+            try:
+                channels, _, dinein = channel_stats(ds, STORE_ID)
+            except Exception:
+                channels, dinein = [], {"revenue": 0, "orders": 0}
         # 赠菜明细
-        try:
-            sd = pull_send_detail(ds, STORE_ID)
-        except Exception:
-            sd = {"items": [], "total": 0, "count": 0, "qty": 0, "by_reason": {}}
+        sd = {"items": [], "total": 0, "count": 0, "qty": 0, "by_reason": {}}
+        if rich:
+            try:
+                sd = pull_send_detail(ds, STORE_ID)
+            except Exception:
+                pass
         # 折扣明细
-        try:
-            dd = pull_discount_detail(ds, STORE_ID)
-        except Exception:
-            dd = {"items": [], "total": 0, "count": 0, "qty": 0, "by_reason": {}, "by_table": []}
-        # 出品超时（菜品维度，下单→传菜 > 20 分钟）
-        try:
-            ts = timeout_stats(ds, STORE_ID)
-        except Exception:
-            ts = {"total": 0, "timeout": 0, "rate": 0, "top": [], "by_name": []}
-        # 菜品停/开售记录（KDS 出餐/撤回）
-        try:
-            kd = pull_sale_operate(c, ds, STORE_ID)
-        except Exception:
-            kd = {"served": 0, "recall": 0, "total": 0, "recalls": []}
+        dd = {"items": [], "total": 0, "count": 0, "qty": 0,
+              "by_reason": {}, "by_table": []}
+        if rich:
+            try:
+                dd = pull_discount_detail(ds, STORE_ID)
+            except Exception:
+                pass
+        # 出品超时：只有今天/昨天需要（图 1 用今天+同比），且时段切片只今天要
+        ts = {"total": 0, "timeout": 0, "rate": 0, "top": [], "by_name": []}
+        if rich:
+            try:
+                ts = timeout_stats(ds, STORE_ID, with_hour=is_tgt, client=c)
+            except Exception:
+                pass
+        # 菜品停/开售记录（只有今天的图 2 展示，历史日不用拉）
+        kd = {"served": 0, "recall": 0, "total": 0, "recalls": []}
+        if is_tgt:
+            try:
+                kd = pull_sale_operate(c, ds, STORE_ID)
+            except Exception:
+                pass
         # 传菜超时（出品→上桌>3分，按菜品列 3 分钟以上数量；与后台传菜统计同口径，仅目标日拉）
         dv = {"total": 0, "late": 0, "rate": 0, "by_name": []}
-        if ds == tgt.isoformat():
+        if is_tgt:
             try:
                 dv = delivery_stats(ds, STORE_ID)
             except Exception:
                 pass
         # 损耗（报损单）
+        lo = {"loss": 0, "base": 0, "detail": {}, "threshold": 0.35}
         try:
             lo = pull_loss(c, ds, STORE_ID)
         except Exception:
-            lo = {"loss": 0, "base": 0, "detail": {}, "threshold": 0.35}
+            pass
         # 堂食 / 外卖实收拆分（后台直接给堂食口径，外卖=总额减堂食）
         _pay = float(b.get("pay_price") or 0)
         _dine_pay = float(b.get("in_pay_price") or 0)
         _take_pay = round(_pay - _dine_pay, 2)
         _dine_ord = sp.get("dine_in", 0) or 0
         _take_ord = sp.get("takeout", 0) or 0
-        rows.append({
+        return {
             "date": ds,
             "weekday": "一二三四五六日"[datetime.date.fromisoformat(ds).weekday()],
             "revenue": b.get("total_price", 0),
@@ -196,8 +240,16 @@ def pull(target_date=None, lookback=14):
             "table_count": TABLE_COUNT,
             "turnover": round((b.get("table_open") or 0) / TABLE_COUNT, 2),
             "table_avg": b.get("table_total_vag", 0),
-        })
-        time.sleep(0.05)
+        }
+
+    # 多天并行：云端单请求延迟高，串行 15 天会把流水线拖死
+    days = sorted(base_rows)
+    workers = int(os.environ.get("REPORT_WORKERS", "5"))
+    if workers <= 1:
+        rows = [build_row(d) for d in days]
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            rows = list(ex.map(build_row, days))
 
     # 月累计：月初→昨天（上面单独查）+ 当天实收
     if rows:
