@@ -10,6 +10,13 @@
     "store_label": "惠州店",
     "table_count": 32
   },
+  "targets": {
+    "weekday": 14000,
+    "friday": 25000,
+    "weekend": 45000,
+    "month": 750000,
+    "_note": "工作日 1.4w / 周五 2.5w / 周末 4.5w；2026-11 月目标 75w（按分档加总为 74.3w，差 0.7w）"
+  },
   "dingtalk_webhook": {
     "enabled": false,
     "access_token": "",

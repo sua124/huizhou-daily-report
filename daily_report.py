@@ -12,16 +12,33 @@ from send_detail import pull_send_detail
 from discount_detail import pull_discount_detail
 from timeout_top import timeout_stats
 from sale_operate import pull_sale_operate
+from loss import pull_loss
 
 _CFG = {}
+_FULL_CFG = {}
 _cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 if os.path.exists(_cfg_path):
-    _CFG = json.load(open(_cfg_path, encoding="utf-8")).get("store", {})
+    _FULL_CFG = json.load(open(_cfg_path, encoding="utf-8"))
+    _CFG = _FULL_CFG.get("store", {})
 
 STORE_ID = _CFG.get("store_id", 16)
 # 门店实际营业桌数（用于翻台率），按门店口径修改
 TABLE_COUNT = _CFG.get("table_count", 43)
 STORE_LABEL = _CFG.get("store_label", "正佳广场店")
+
+# 营业目标：工作日 / 周五 / 周末 三档 + 月度目标
+TARGETS = _FULL_CFG.get("targets", {})
+
+
+def target_for(ds, targets=None):
+    """按星期几取当天营业目标：周五单独一档，周六周日一档，其余工作日一档"""
+    t = TARGETS if targets is None else targets
+    wd = datetime.date.fromisoformat(ds).weekday()  # 0=周一
+    if wd == 4:
+        return float(t.get("friday", 0) or 0)
+    if wd >= 5:
+        return float(t.get("weekend", 0) or 0)
+    return float(t.get("weekday", 0) or 0)
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(BASE, "data")
@@ -65,6 +82,15 @@ def pull(target_date=None, lookback=14):
     # 目标日单独查
     base_rows.update(fetch_pool(tgt.isoformat(), tgt.isoformat()))
 
+    # 月累计实收：只查「月初 → 昨天」这段历史区间（区间含今天会把今天算两遍）
+    month_key = tgt.strftime("%Y-%m")
+    month_start = tgt.replace(day=1)
+    month_pay = 0.0
+    if month_start <= prev_day:
+        for _d, _r in fetch_pool(month_start.isoformat(), prev_day.isoformat()).items():
+            if _d.startswith(month_key):
+                month_pay += float(_r.get("pay_price") or 0)
+
     rows = []
     for ds in sorted(base_rows):
         b = base_rows[ds]
@@ -104,6 +130,17 @@ def pull(target_date=None, lookback=14):
             kd = pull_sale_operate(c, ds, STORE_ID)
         except Exception:
             kd = {"served": 0, "recall": 0, "total": 0, "recalls": []}
+        # 损耗（报损单）
+        try:
+            lo = pull_loss(c, ds, STORE_ID)
+        except Exception:
+            lo = {"loss": 0, "base": 0, "detail": {}, "threshold": 0.35}
+        # 堂食 / 外卖实收拆分（后台直接给堂食口径，外卖=总额减堂食）
+        _pay = float(b.get("pay_price") or 0)
+        _dine_pay = float(b.get("in_pay_price") or 0)
+        _take_pay = round(_pay - _dine_pay, 2)
+        _dine_ord = sp.get("dine_in", 0) or 0
+        _take_ord = sp.get("takeout", 0) or 0
         rows.append({
             "date": ds,
             "weekday": "一二三四五六日"[datetime.date.fromisoformat(ds).weekday()],
@@ -131,6 +168,16 @@ def pull(target_date=None, lookback=14):
             "discount_tables": len(dd.get("by_table") or []),
             "timeout": ts,
             "sale": kd,
+            "loss": lo.get("loss", 0),
+            "loss_base": lo.get("base", 0),
+            "loss_threshold": lo.get("threshold", 0.35),
+            "target": target_for(ds),
+            "dine_pay": _dine_pay,
+            "takeout_pay": _take_pay,
+            "dinein_orders": _dine_ord,
+            "takeout_orders": _take_ord,
+            "dinein_avg": round(_dine_pay / _dine_ord, 2) if _dine_ord else 0,
+            "takeout_avg": round(_take_pay / _take_ord, 2) if _take_ord else 0,
             "people": b.get("people_num", 0),
             "order_avg": b.get("order_total_vag", 0),
             "people_avg": b.get("people_total_vag", 0),
@@ -142,6 +189,11 @@ def pull(target_date=None, lookback=14):
             "table_avg": b.get("table_total_vag", 0),
         })
         time.sleep(0.05)
+
+    # 月累计：月初→昨天（上面单独查）+ 当天实收
+    if rows:
+        rows[-1]["month_pay"] = round(month_pay + float(rows[-1].get("pay") or 0), 2)
+        rows[-1]["month_target"] = float(TARGETS.get("month") or 0)
 
     path = os.path.join(DATA, f"report_{tgt.isoformat()}.json")
     json.dump(rows, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=1)

@@ -732,7 +732,10 @@ def build_all(data_path, out_dir, store_label="13店（正佳广场店）"):
             except OSError:
                 pass
     paths = []
-    for fn, name in [(build_overview, "01_经营概览"),
+    # 图 1 用 4 店式单页版式（含目标达成/损耗/近 7 日两张表）。
+    # 延迟导入：render_v4 反过来要 import 本模块的字体与配色，避免循环引用。
+    from render_v4 import build_page
+    for fn, name in [(build_page, "01_经营概览"),
                      (build_discount, "02_赠菜折扣与停开售"),
                      (build_timeout, "03_出品超时")]:
         p = os.path.join(out_dir, f"report_{date}_{name}.png")
