@@ -3,11 +3,15 @@ name: 惠州店经营日报
 on:
   schedule:
     # GitHub Actions 的 cron 一律用 UTC。北京时间 = UTC + 8
-    # 分钟刻意避开 :00 / :10 —— 整点是全球定时任务的高峰，GitHub 会把任务排到
-    # 队列里等半小时以上（实测 22:00 那批被延迟到 22:47 才开跑）。
-    # 用冷门分钟能明显减少排队延迟。
-    - cron: '7 14 * * 1-5'    # 工作日 22:07
-    - cron: '17 14 * * 6,0'   # 周末   22:17
+    #
+    # 为什么 cron 提前到 21 点而不是直接写 22:20：
+    #   GitHub 免费版 schedule 不是准点执行，而是把任务丢进队列，实测排队 5~48 分钟
+    #   （22:00 那批被延迟到 22:47 才开跑）。所以「cron 定几点」根本决定不了「几点到群」。
+    # 现在的做法：cron 提前 60 分钟触发，任务启动后先原地等到北京时间 22:12 再开始拉数据，
+    #   把排队延迟全部吸收进等待时间里 —— 不管排队 3 分钟还是 50 分钟，都是 22:12 开始跑。
+    # 加班/打烊：22:00 收档，22:12 拉数据保证当日流水已结完，不会少算最后一小时。
+    - cron: '5 13 * * 1-5'    # 工作日：21:05 触发，等到 22:12 开跑
+    - cron: '15 13 * * 6,0'   # 周末：  21:15 触发，等到 22:12 开跑
   workflow_dispatch:          # 手动补跑：Actions 页面点 Run workflow
     inputs:
       date:
@@ -26,7 +30,8 @@ concurrency:
 jobs:
   daily:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # 里面有一次最长约 67 分钟的等待（吸收 cron 排队），所以总超时要放宽
+    timeout-minutes: 100
 
     steps:
       - uses: actions/checkout@v4
@@ -43,6 +48,32 @@ jobs:
 
       - name: 安装依赖
         run: pip install -r requirements.txt
+
+      - name: 等到北京时间 22:12（吸收 GitHub cron 排队延迟）
+        # 只在定时触发时等待；手动 Run workflow（含补跑历史日期）要立刻跑，不能等
+        if: github.event_name == 'schedule'
+        run: |
+          python - <<'PY'
+          import datetime, sys, time
+
+          TARGET_H, TARGET_M = 14, 12          # UTC 14:12 = 北京 22:12
+          MAX_WAIT = 80 * 60                   # 等待上限，防止异常情况一直挂着
+
+          now = datetime.datetime.now(datetime.timezone.utc)
+          tgt = now.replace(hour=TARGET_H, minute=TARGET_M, second=0, microsecond=0)
+          wait = (tgt - now).total_seconds()
+
+          if wait <= 0:
+              print(f"当前 UTC {now:%H:%M}，已过目标时间，立即开始（可能排队较久）")
+              sys.exit(0)
+          if wait > MAX_WAIT:
+              print(f"距目标还有 {wait/60:.0f} 分钟，超过等待上限，立即开始")
+              sys.exit(0)
+
+          print(f"当前 UTC {now:%H:%M}，等待 {wait:.0f} 秒（{wait/60:.0f} 分钟）到北京 22:12")
+          time.sleep(int(wait))
+          print(f"已到 {datetime.datetime.now(datetime.timezone.utc):%H:%M} UTC，开始拉当日数据")
+          PY
 
       - name: 生成日报图
         env:
