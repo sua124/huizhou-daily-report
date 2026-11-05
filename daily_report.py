@@ -11,6 +11,7 @@ from channel_stats import channel_stats
 from send_detail import pull_send_detail
 from discount_detail import pull_discount_detail
 from timeout_top import timeout_stats
+from delivery_late import delivery_stats
 from sale_operate import pull_sale_operate
 from loss import pull_loss
 
@@ -130,6 +131,14 @@ def pull(target_date=None, lookback=14):
             kd = pull_sale_operate(c, ds, STORE_ID)
         except Exception:
             kd = {"served": 0, "recall": 0, "total": 0, "recalls": []}
+        # 传菜时效（下单→传菜完成，>20 分钟为慢；仅堂食口径，只在目标日拉）
+        dv = {"total": 0, "late": 0, "rate": 0, "avg": 0, "median": 0, "max": 0,
+              "top": [], "peak": []}
+        if ds == tgt.isoformat():
+            try:
+                dv = delivery_stats(ds, STORE_ID)
+            except Exception:
+                pass
         # 损耗（报损单）
         try:
             lo = pull_loss(c, ds, STORE_ID)
@@ -167,6 +176,7 @@ def pull(target_date=None, lookback=14):
             "discount_qty": dd.get("qty", 0),
             "discount_tables": len(dd.get("by_table") or []),
             "timeout": ts,
+            "delivery": dv,
             "sale": kd,
             "loss": lo.get("loss", 0),
             "loss_base": lo.get("base", 0),

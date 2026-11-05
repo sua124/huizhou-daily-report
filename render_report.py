@@ -19,6 +19,8 @@ ACCENT = "#1F4E79"
 UP = "#C0392B"
 DOWN = "#1E8449"
 LINE = "#E5E7EB"
+# 传菜时效红线（分钟）：下单 → 传菜完成
+LATE_MIN = 20
 # 实收金额高亮色
 HILITE = "#C0392B"
 HILITE_BG = "#FDEDEC"
@@ -747,13 +749,51 @@ def build_timeout(rows, out_path, store_label="13店（正佳广场店）"):
             dr.text((cx, base + 158), f"{h}时", font=F(15), fill=INK3, anchor="ma")
         c.y = base + 196
 
+    # 传菜时效（老板指定跟踪项：出品慢 2 道但传菜慢 30+ 道，慢在传菜环节）
+    dv = last.get("delivery") or {}
+    if dv.get("total"):
+        c.section("传菜时效（下单 → 传菜完成，>20 分为慢）", gap=18)
+        c.kpi_row([
+            ("传菜道数·堂食", f"{dv['total']:,}",
+             f"中位 {dv.get('median', 0)} 分 · 最长 {dv.get('max', 0)} 分", INK),
+            ("慢传道数", f"{dv.get('late', 0):,}",
+             f"超 {LATE_MIN} 分的单据", UP if dv.get("late") else INK),
+            ("慢传率", f"{dv.get('rate', 0):.2f}%",
+             f"对照出品超时率 {ts.get('rate', 0):.2f}%", ACCENT),
+            ("平均传菜时长", f"{dv.get('avg', 0):.1f} 分",
+             "含厨房出品 + 传菜全程", INK),
+        ], big=False)
+
+        tops = dv.get("top") or []
+        if tops:
+            c.section("慢传 TOP（含单号，可直接查单）", gap=10)
+            for i, t in enumerate(tops[:8]):
+                nm = t["name"]
+                if len(nm) > 16:
+                    nm = nm[:15] + "…"
+                over_by = t["mins"] - LATE_MIN
+                badge_c = "#C0392B" if over_by >= 8 else ("#E8A87C" if over_by >= 4 else "#9FBFD9")
+                dr.ellipse([PAD + 4, c.y + 3, PAD + 30, c.y + 29], fill=badge_c)
+                dr.text((PAD + 17, c.y + 16), str(i + 1), font=F(16, True),
+                        fill="#FFFFFF", anchor="mm")
+                dr.text((PAD + 42, c.y + 2), nm, font=F(21), fill=INK)
+                dr.text((W - PAD - 8, c.y + 2), f"{t['mins']} 分",
+                        font=F(22, True), fill=UP, anchor="ra")
+                dr.text((PAD + 42, c.y + 32),
+                        f"单 {t['order_id']} · {t['created']} 下单 → {t['delivered']} 传菜",
+                        font=F(17), fill=INK3)
+                dr.line([PAD, c.y + 58, W - PAD, c.y + 58], fill=LINE, width=1)
+                c.y += 60
+            c.y += 6
+
     # 口径
     c.footer([
         f"口径：下单 → 菜品出品完成（KDS 出品记录），堂食超 {thr_dine} 分、"
         f"外卖超 {thr_take} 分计为超时；按菜品道数计数",
         (f"已剔除 {' / '.join(ts.get('excluded_names') or [])} 共 {ts.get('excluded', 0)} 道"
          f"（制作工艺特殊，计入会失真）") if ts.get("excluded") else "",
-        "数据源：摩打后台 · 出品统计（kdsStatis）",
+        "传菜时效口径：下单 → 传菜完成（仅堂食），超 20 分计为慢传，慢传=出品完成后传菜/取餐环节拖慢",
+        "数据源：摩打后台 · 出品统计（kdsStatis）/ 传菜统计（deliverStatistics）",
         f"生成时间 {datetime.datetime.now():%Y-%m-%d %H:%M}",
     ])
     return c.save(out_path)
