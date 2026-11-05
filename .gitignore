@@ -10,6 +10,7 @@ cloud/.creds.json
 data/
 output/
 daily.log
+*.log
 run.log
 
 # 排查用的临时输出
