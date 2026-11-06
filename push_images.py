@@ -22,8 +22,12 @@ CFG = json.load(open(os.path.join(BASE, "config.json"), encoding="utf-8"))
 CID = CFG.get("dingtalk_group", {}).get("open_conversation_id", "")
 GROUP_NAME = CFG.get("dingtalk_group", {}).get("name", "")
 LABEL = CFG.get("store", {}).get("store_label", "门店")
-# 每张图要艾特的人：{"02_赠菜折扣与停开售": ["余志玲", "罗惠玲"], ...}
+# 每张图要艾特的手机号：{"02_赠菜折扣与停开售": ["134...", ...], ...}
+# 2026-11-06 起直接配手机号（云端机器人用 atMobiles；本地 dws 需经
+# mentions_phones 反查姓名、再查 openDingTalkId）
 MENTIONS = CFG.get("mentions") or {}
+PHONES = CFG.get("mentions_phones") or {}
+MOBILE2NAME = {str(v): k for k, v in PHONES.items()}
 MEMBERS_CACHE = os.path.join(BASE, "members.json")
 
 
@@ -84,11 +88,22 @@ def _run(args):
     return p.returncode, p.stdout or "", p.stderr or ""
 
 
+def _valid_id(v):
+    """完整 openDingTalkId 一般 30+ 字符；过短视为截断（2026-11-05 的缓存
+    就是被截断过，艾特给了残缺 ID 导致群里根本没 @ 到人）。"""
+    return bool(v) and len(str(v)) >= 25
+
+
 def _load_members():
     try:
-        return json.load(open(MEMBERS_CACHE, encoding="utf-8"))
+        m = json.load(open(MEMBERS_CACHE, encoding="utf-8"))
     except Exception:
         return {}
+    # 缓存里混有截断 ID 时整份弃用，强制刷新
+    if any(not _valid_id(v) for v in m.values()):
+        print("[提示] 成员缓存含残缺 ID，重新拉取群成员")
+        return {}
+    return m
 
 
 def _refresh_members():
@@ -102,8 +117,14 @@ def _refresh_members():
     if not users:
         print(f"[警告] 群成员拉取失败，本次不艾特：{(err or out)[:120]}")
         return {}
-    m = {u.get("name"): u.get("openDingtalkId") or u.get("openDingTalkId")
-         for u in users if u.get("name")}
+    m = {}
+    for u in users:
+        oid = u.get("openDingtalkId") or u.get("openDingTalkId")
+        if u.get("name") and oid:
+            if not _valid_id(oid):
+                print(f"[警告] {u['name']} 的 ID 疑似截断（{oid}），跳过")
+                continue
+            m[u["name"]] = oid
     try:
         json.dump(m, open(MEMBERS_CACHE, "w", encoding="utf-8"),
                   ensure_ascii=False, indent=1)
@@ -173,8 +194,10 @@ def push(date=None, dry_run=False):
         content = f"![{title}](./{name})"
         pairs = []
         ats = MENTIONS.get(key) or []
-        if ats:
-            pairs, members = _resolve_ids(ats, members)
+        # 配置里是手机号 → 反查姓名 → 查 openDingTalkId（兼容旧配置直接写姓名）
+        names = [MOBILE2NAME.get(str(a), str(a)) for a in ats]
+        if names:
+            pairs, members = _resolve_ids(names, members)
             if pairs:
                 content += "\n\n" + " ".join(f"<@{v}>" for _, v in pairs)
                 print(f"  艾特：{'、'.join(n for n, _ in pairs)}")

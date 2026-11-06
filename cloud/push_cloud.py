@@ -153,11 +153,17 @@ def push(date=None, dry_run=False):
         text = f"## {title}\n\n![]({url})\n"
 
         names = MENTIONS.get(key) or []
-        mobiles = [PHONES.get(n) for n in names]
-        mobiles = [m for m in mobiles if m]
+        if names and not str(names[0]).isdigit():
+            # 旧配置格式：mentions 里放姓名、mentions_phones 里查手机号
+            mobiles = [PHONES.get(n) for n in names]
+            mobiles = [m for m in mobiles if m]
+        else:
+            # 新配置格式（2026-11-06 起）：mentions 直接放手机号
+            mobiles = [str(m) for m in names if str(m).strip()]
+        display = [k for k, v in PHONES.items() if v in mobiles] or mobiles
         if names and mobiles:
             text += "\n" + " ".join(f"@{m}" for m in mobiles) + "　请查收"
-            print(f"  艾特：{'、'.join(names)}")
+            print(f"  艾特：{'、'.join(display)}")
         elif names:
             print(f"  提示：{'、'.join(names)} 未配手机号，本次不艾特")
 
