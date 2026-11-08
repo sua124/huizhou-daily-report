@@ -42,13 +42,33 @@ def main():
     )
     today = datetime.date.today().isoformat()
     link = RUN_URL or (f"https://github.com/{REPO}/actions" if REPO else "")
-    text = (
-        f"### {LABEL}日报生成失败\n\n"
-        f"- 日期：{today}\n"
-        f"- 原因：云端流程中途报错（常见是数据接口超时或图片提交冲突）\n"
-        f"- 排查：{link}\n\n"
-        f"可以在手机 GitHub → Actions → 该次运行 → 点 Run workflow 重跑一次。"
-    )
+
+    # 推送步骤写了漏发清单就用它，告警里说清楚缺哪张（避免"只报失败不说原因"）
+    missing = ""
+    mp = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                      "output", "_push_missing.txt")
+    if os.path.exists(mp):
+        try:
+            missing = open(mp, encoding="utf-8").read().strip()
+        except Exception:
+            missing = ""
+    if missing:
+        text = (
+            f"### {LABEL}日报有图片未确认送达\n\n"
+            f"- 日期：{today}\n"
+            f"- 未确认：{missing}\n"
+            f"- 说明：钉钉返回「系统繁忙」时消息往往其实已送达，为避免群里刷屏，"
+            f"这次没有自动重发。请先在群里看一眼，确实缺图再让小的补发。\n"
+            f"- 运行记录：{link}"
+        )
+    else:
+        text = (
+            f"### {LABEL}日报生成失败\n\n"
+            f"- 日期：{today}\n"
+            f"- 原因：云端流程中途报错（常见是数据接口超时或图片提交冲突）\n"
+            f"- 排查：{link}\n\n"
+            f"可以在手机 GitHub → Actions → 该次运行 → 点 Run workflow 重跑一次。"
+        )
     body = {"msgtype": "markdown",
             "markdown": {"title": f"{LABEL}日报失败", "text": text}}
     req = urllib.request.Request(

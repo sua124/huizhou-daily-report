@@ -100,9 +100,11 @@ def send_markdown(title, text, at_mobiles=None, at_user_ids=None):
 
     payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
     res = {}
-    # 钉钉偶发超时/限流（130101=发送过快），重发一次基本就能过；
-    # 这里失败会导致某张图缺失，进而整次运行判失败，值得重试。
-    for i in range(3):
+    # ⚠️ 只在「请求根本没到钉钉」时重试。
+    # 2026-11-08 踩坑：钉钉返回「系统繁忙」时消息其实已经投递到群里了，
+    # 我们当成失败重发 → 图 2/图 3 在群里各出现两次，老板收到 5 张。
+    # 自定义机器人没有幂等键、也没有查询接口，所以宁可少发后告警，也绝不重发。
+    for i in range(2):
         req = urllib.request.Request(
             url, data=payload,
             headers={"Content-Type": "application/json;charset=utf-8"})
@@ -110,13 +112,14 @@ def send_markdown(title, text, at_mobiles=None, at_user_ids=None):
             with urllib.request.urlopen(req, timeout=30) as r:
                 res = json.loads(r.read().decode("utf-8"))
         except Exception as e:
-            res = {"errcode": -1, "errmsg": f"{type(e).__name__}: {e}"}
+            # 网络层异常（连接被拒/重置/DNS）：请求多半没送达，重试是安全的
+            res = {"errcode": -1, "errmsg": f"{type(e).__name__}: {e}",
+                   "_network": True}
         if res.get("errcode") == 0:
             return res
-        if res.get("errcode") in (-1, 130101) and i < 2:
-            wait = 3 * (i + 1)
-            print(f"  发送失败（{res.get('errmsg') or res.get('errcode')}），{wait}s 后重试")
-            time.sleep(wait)
+        if res.get("_network") and i == 0:
+            print(f"  网络异常（{res.get('errmsg')}），5s 后重试一次")
+            time.sleep(5)
             continue
         return res
     return res
@@ -141,6 +144,7 @@ def push(date=None, dry_run=False):
 
     print(f"待推送 {len(pngs)} 张，图片前缀 {base}")
     ok = 0
+    missing = []
     for name in pngs:
         stem = os.path.splitext(name)[0]
         parts = stem.split("_")
@@ -174,6 +178,7 @@ def push(date=None, dry_run=False):
 
         if not wait_reachable(url):
             print(f"[跳过] {name}：CDN 迟迟不可访问")
+            missing.append(f"{suffix}（CDN 不可访问）")
             continue
 
         res = send_markdown(title, text, at_mobiles=mobiles or None)
@@ -181,8 +186,22 @@ def push(date=None, dry_run=False):
             print(f"[成功] {name}")
             ok += 1
         else:
-            print(f"[失败] {name}：{res}")
-        time.sleep(1)
+            # 钉钉已返回业务错误但消息很可能已投递（「系统繁忙」就是这种），
+            # 不重发以免群里重复；记进漏发清单，由 workflow 的告警步骤提示补发。
+            print(f"[未确认] {name}：{res}（不重发，避免重复）")
+            missing.append(f"{suffix}（{res.get('errmsg') or res.get('errcode')}）")
+        # 间隔放宽到 5 秒：连发图片容易触发钉钉限流，就是「系统繁忙」的来源
+        time.sleep(5)
+
+    if missing:
+        txt = "、".join(missing)
+        print(f"[警告] 未确认发送成功：{txt}")
+        try:
+            with open(os.path.join(OUT, "_push_missing.txt"), "w",
+                      encoding="utf-8") as f:
+                f.write(f"{td}: {txt}")
+        except Exception:
+            pass
 
     print(f"推送完成：{ok}/{len(pngs)}")
     return ok, len(pngs)
