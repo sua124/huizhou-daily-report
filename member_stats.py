@@ -78,6 +78,53 @@ def daily_trend(c, tgt, store_id, days=14, window=7, workers=4):
         return []
 
 
+def pull_new_members(c, tgt, store_id, days=14):
+    """
+    每日新增会员（注册日 = user.created_at）。
+    注意：/admin/user/index 的 created_arr 实际不生效，接口固定按注册时间倒序返回，
+    所以一次多拉几页、再本地按日期分组（14 天约 500~700 条，1~2 次请求足够）。
+    """
+    tgt = datetime.date.fromisoformat(tgt) if isinstance(tgt, str) else tgt
+    need_from = tgt - datetime.timedelta(days=days - 1)
+    month_start = tgt.replace(day=1)
+    oldest = min(need_from, month_start)
+
+    rows, page, limit = [], 1, 1000
+    while page <= 3:
+        r = c.post("/admin/user/index", {
+            "created_arr": [oldest.isoformat(), tgt.isoformat()],
+            "store_ids": [store_id], "page": page, "limit": limit,
+        })
+        lst = r.get("data") or []
+        rows += [x for x in lst if int(x.get("store_id") or 0) == int(store_id)]
+        if len(lst) < limit:
+            break
+        earliest = min((str(x.get("created_at"))[:10] for x in lst), default="9999")
+        if earliest < oldest.isoformat():
+            break
+        page += 1
+
+    cnt = {}
+    for x in rows:
+        d = str(x.get("created_at") or "")[:10]
+        if d:
+            cnt[d] = cnt.get(d, 0) + 1
+
+    series = []
+    for i in range(days - 1, -1, -1):
+        d = tgt - datetime.timedelta(days=i)
+        k = d.isoformat()
+        series.append({"date": k, "label": f"{d.month}/{d.day}", "count": cnt.get(k, 0)})
+
+    return {
+        "daily": series,
+        "today": cnt.get(tgt.isoformat(), 0),
+        "month": sum(v for k, v in cnt.items()
+                     if month_start.isoformat() <= k <= tgt.isoformat()),
+        "total": sum(v for k, v in cnt.items() if k >= need_from.isoformat()),
+    }
+
+
 def member_report(c, tgt, store_id):
     """
     会员复购完整报告（共 5 次请求，只有目标日拉）：
@@ -106,8 +153,15 @@ def member_report(c, tgt, store_id):
     except Exception:
         daily = []
 
+    # 每日新增会员
+    try:
+        new_members = pull_new_members(c, tgt, store_id)
+    except Exception:
+        new_members = {}
+
     return {"date": tgt.isoformat(), "today": today, "month": month,
-            "trend": trend, "daily": daily, "daily_window": 7}
+            "trend": trend, "daily": daily, "daily_window": 7,
+            "new_members": new_members}
 
 
 if __name__ == "__main__":

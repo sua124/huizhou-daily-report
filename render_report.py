@@ -813,6 +813,7 @@ def build_member(rows, out_path, store_label="13店（正佳广场店）"):
         ])
         return c.save(out_path)
 
+    nm = mb.get("new_members") or {}
     c.section("当日会员消费")
     c.kpi_row([
         ("会员消费人次", f"{today['total']:,}", "当日会员到店消费人次", INK),
@@ -821,6 +822,8 @@ def build_member(rows, out_path, store_label="13店（正佳广场店）"):
          "期内来过 ≥2 次", UP if today["repeat"] else INK),
         ("复购率", f"{today['rate']:.2f}%",
          f"本月累计 {month.get('rate', 0):.2f}%", ACCENT),
+        ("新增会员", f"{nm.get('today', 0):,}",
+         f"本月累计 {nm.get('month', 0):,} 人", INK),
     ], big=False)
 
     if month.get("total"):
@@ -857,6 +860,35 @@ def build_member(rows, out_path, store_label="13店（正佳广场店）"):
             dr.text((cx, base + 186), f"{t['repeat']} / {t['total']:,} 人次",
                     font=F(15), fill=INK3, anchor="ma")
         c.y = base + 224
+
+    # 每日新增会员（近 14 天，注册日口径）
+    nd = nm.get("daily") or []
+    if nd:
+        c.section(f"每日新增会员（近 {len(nd)} 天）", gap=12)
+        c.note(f"当日新增 {nm.get('today', 0)} 人 · 本月累计 {nm.get('month', 0):,} 人 · "
+               f"近 {len(nd)} 日合计 {nm.get('total', 0):,} 人"
+               f"（日均 {nm.get('total', 0) / len(nd):.0f} 人）", size=18)
+        nmax = max((x["count"] for x in nd), default=0) or 1
+        navg = sum(x["count"] for x in nd) / len(nd)
+        base = c.y + 34
+        slot = (W - PAD * 2) / len(nd)
+        bar_w = min(slot * 0.52, 40)
+        avg_y = base + 140 - int(140 * navg / nmax)
+        dr.line([PAD, avg_y, W - PAD, avg_y], fill="#C9CFD6", width=1)
+        dr.text((W - PAD, avg_y - 22), f"日均 {navg:.0f} 人", font=F(15), fill=INK3,
+                anchor="ra")
+        for i, x in enumerate(nd):
+            cx = PAD + i * slot + slot / 2
+            hbar = max(int(140 * x["count"] / nmax), 3)
+            cur = i == len(nd) - 1
+            dr.rounded_rectangle([cx - bar_w / 2, base + 140 - hbar,
+                                  cx + bar_w / 2, base + 140], 3,
+                                 fill="#2E7D5B" if cur else "#A8C8B8")
+            dr.text((cx, base + 140 - hbar - 18), str(x["count"]),
+                    font=F(13, True), fill="#1E6B4A" if cur else INK2, anchor="ma")
+            dr.text((cx, base + 148), x["label"], font=F(13),
+                    fill=INK if cur else INK3, anchor="ma")
+        c.y = base + 178
 
     # 日复购率（近 14 天，滚动 7 天口径）
     daily = mb.get("daily") or []
@@ -925,7 +957,8 @@ def build_member(rows, out_path, store_label="13店（正佳广场店）"):
         "首次消费人次 = 期内首次到店",
         "月度趋势为自然月累计；当前月为月初至今",
         "日复购率 = 该日往前 7 天窗口累计口径（单日当天复购几乎恒为 0，不具观察价值）",
-        "数据源：摩打后台 · 复购率汇总（repurchase）",
+        "新增会员 = 注册日口径（后台会员列表 created_at）",
+        "数据源：摩打后台 · 复购率汇总（repurchase）/ 会员列表（user）",
         f"生成时间 {datetime.datetime.now():%Y-%m-%d %H:%M}",
     ])
     return c.save(out_path)
