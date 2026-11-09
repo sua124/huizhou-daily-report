@@ -105,10 +105,11 @@ def pct(a, b):
 class Canvas:
     """带通用组件的画布包装，三张图共用"""
 
-    def __init__(self, last, store_label, page_no, page_title):
+    def __init__(self, last, store_label, page_no, page_title, total=3):
         self.last = last
         # 图 2 合并了赠菜折扣 + 停开售，内容较长，画布预留充足
         self.H = 8000
+        self.total = total
         self.img = Image.new("RGB", (W, self.H), BG)
         self.dr = ImageDraw.Draw(self.img)
         self.y = 226
@@ -122,7 +123,7 @@ class Canvas:
         dt = datetime.date.fromisoformat(last["date"])
         wk = "一二三四五六日"[dt.weekday()]
         dr.text((PAD, 158), f"{last['date']}  周{wk}", font=F(26), fill="#C7D8E8")
-        dr.text((W - PAD, 158), f"{page_title}　{page_no}/3", font=F(24),
+        dr.text((W - PAD, 158), f"{page_title}　{page_no}/{self.total}", font=F(24),
                 fill="#C7D8E8", anchor="ra")
 
     def section(self, title, gap=0):
@@ -374,7 +375,7 @@ def build_overview(rows, out_path, store_label="13店（正佳广场店）"):
 # ============ 图 2：赠菜与折扣 ============
 def build_discount(rows, out_path, store_label="13店（正佳广场店）"):
     last = rows[-1]
-    c = Canvas(last, store_label, 2, "赠菜·折扣·停开售")
+    c = Canvas(last, store_label, 2, "赠菜·折扣·停开售", total=4)
     dr = c.dr
 
     sd = last.get("send_detail") or {}
@@ -596,7 +597,7 @@ def sale_section(c, dr, sd):
 # ============ 图 4：出品超时 ============
 def build_timeout(rows, out_path, store_label="13店（正佳广场店）"):
     last = rows[-1]
-    c = Canvas(last, store_label, 3, "出品超时")
+    c = Canvas(last, store_label, 3, "出品超时", total=4)
     dr = c.dr
     ts = last.get("timeout") or {}
 
@@ -792,6 +793,112 @@ def build_timeout(rows, out_path, store_label="13店（正佳广场店）"):
     return c.save(out_path)
 
 
+# ============ 图 4：会员复购 ============
+def build_member(rows, out_path, store_label="13店（正佳广场店）"):
+    last = rows[-1]
+    mb = last.get("member") or {}
+    c = Canvas(last, store_label, 4, "会员复购", total=4)
+    dr = c.dr
+    today = mb.get("today") or {}
+    month = mb.get("month") or {}
+    trend = mb.get("trend") or []
+
+    if not today.get("total"):
+        c.section("会员复购")
+        c.note("当日无会员消费记录", size=22)
+        c.footer([
+            "口径：期内消费 ≥2 次记为复购（与后台「复购率汇总」一致）",
+            "数据源：摩打后台 · 复购率汇总（repurchase）",
+            f"生成时间 {datetime.datetime.now():%Y-%m-%d %H:%M}",
+        ])
+        return c.save(out_path)
+
+    c.section("当日会员消费")
+    c.kpi_row([
+        ("会员消费人次", f"{today['total']:,}", "当日会员到店消费人次", INK),
+        ("首次消费人次", f"{today['first']:,}", "期内首次到店", INK),
+        ("复购人数", f"{today['repeat']:,}",
+         "期内来过 ≥2 次", UP if today["repeat"] else INK),
+        ("复购率", f"{today['rate']:.2f}%",
+         f"本月累计 {month.get('rate', 0):.2f}%", ACCENT),
+    ], big=False)
+
+    if month.get("total"):
+        c.section(f"本月累计（{last['date'][:8]}01 → {last['date']}）", gap=8)
+        c.kpi_row([
+            ("会员消费人次", f"{month['total']:,}",
+             f"日均 {month['total'] / max(int(last['date'][8:]), 1):,.0f} 人次", INK),
+            ("首次消费人次", f"{month['first']:,}",
+             f"占 {pct(month['first'], month['total'])}", INK),
+            ("复购人数", f"{month['repeat']:,}",
+             f"占 {pct(month['repeat'], month['total'])}", INK),
+            ("复购率", f"{month['rate']:.2f}%",
+             "月初至今累计口径", ACCENT),
+        ], big=False)
+
+    # 月度趋势（近 3 个完整月 + 当前月）
+    if trend:
+        c.section("月度复购率趋势", gap=10)
+        pmax = max((t["rate"] for t in trend), default=0) or 1
+        base = c.y + 20
+        slot = (W - PAD * 2) / len(trend)
+        bar_w = min(slot * 0.4, 90)
+        for i, t in enumerate(trend):
+            cx = PAD + i * slot + slot / 2
+            hbar = max(int(140 * t["rate"] / pmax), 4)
+            cur = i == len(trend) - 1
+            color = ACCENT if cur else "#A9C4DC"
+            dr.rounded_rectangle([cx - bar_w / 2, base + 150 - hbar,
+                                  cx + bar_w / 2, base + 150], 3, fill=color)
+            dr.text((cx, base + 150 - hbar - 26), f"{t['rate']:.2f}%",
+                    font=F(20, True), fill=ACCENT if cur else INK, anchor="ma")
+            dr.text((cx, base + 158), t["label"], font=F(18),
+                    fill=INK if cur else INK3, anchor="ma")
+            dr.text((cx, base + 186), f"{t['repeat']} / {t['total']:,} 人次",
+                    font=F(15), fill=INK3, anchor="ma")
+        c.y = base + 224
+
+    # 会员等级复购阶梯（本月累计，结构性因素）
+    tiers = month.get("tiers") or []
+    if tiers:
+        c.section("会员等级复购阶梯（本月）", gap=10)
+        c.note("条长 = 该等级复购率；等级越高复购越高，等级沉淀是复购主力", size=18)
+        bw_full = W - PAD * 2
+        label_w, right_w = 130, 230
+        bar_max = bw_full - label_w - right_w - 20
+        for t in tiers:
+            nm = t["name"]
+            dr.text((PAD, c.y + 6), nm, font=F(21, True), fill=INK)
+            # 比例条（以 40% 复购率画满）
+            fill_w = int(bar_max * min(t["rate"], 40) / 40)
+            bar_y = c.y + 14
+            dr.rounded_rectangle([PAD + label_w, bar_y,
+                                  PAD + label_w + bar_max, bar_y + 20], 8, fill=CARD)
+            if fill_w > 2:
+                dr.rounded_rectangle([PAD + label_w, bar_y,
+                                      PAD + label_w + fill_w, bar_y + 20], 8,
+                                     fill="#5B8DB8" if t["rate"] < 10 else
+                                     ("#E8A87C" if t["rate"] < 25 else "#C0392B"))
+            dr.text((W - PAD, c.y), f"复购率 {t['rate']:.2f}%",
+                    font=F(20, True), fill=UP if t["rate"] >= 20 else INK,
+                    anchor="ra")
+            dr.text((W - PAD, c.y + 28),
+                    f"{t['repeat']} 人复购 / {t['total']:,} 人次 · 首次占 {t['first_rate']:.0f}%",
+                    font=F(16), fill=INK3, anchor="ra")
+            dr.line([PAD, c.y + 58, W - PAD, c.y + 58], fill=LINE, width=1)
+            c.y += 62
+        c.y += 6
+
+    c.footer([
+        "口径：期内消费 ≥2 次记为复购（与后台「复购率汇总」一致）；"
+        "首次消费人次 = 期内首次到店",
+        "月度趋势为自然月累计；当前月为月初至今",
+        "数据源：摩打后台 · 复购率汇总（repurchase）",
+        f"生成时间 {datetime.datetime.now():%Y-%m-%d %H:%M}",
+    ])
+    return c.save(out_path)
+
+
 def build_all(data_path, out_dir, store_label="13店（正佳广场店）"):
     """生成三张图（赠菜折扣与菜品停开售合并为第 2 张），返回路径列表"""
     rows = json.load(open(data_path, encoding="utf-8"))
@@ -812,7 +919,8 @@ def build_all(data_path, out_dir, store_label="13店（正佳广场店）"):
     from render_v4 import build_page
     for fn, name in [(build_page, "01_经营概览"),
                      (build_discount, "02_赠菜折扣与停开售"),
-                     (build_timeout, "03_出品超时")]:
+                     (build_timeout, "03_出品超时"),
+                     (build_member, "04_会员复购")]:
         p = os.path.join(out_dir, f"report_{date}_{name}.png")
         fn(rows, p, store_label)
         paths.append(p)

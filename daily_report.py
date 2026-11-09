@@ -15,6 +15,7 @@ from timeout_top import timeout_stats
 from delivery_late import delivery_stats
 from sale_operate import pull_sale_operate
 from loss import pull_loss
+from member_stats import member_report
 
 _CFG = {}
 _FULL_CFG = {}
@@ -181,6 +182,13 @@ def pull(target_date=None, lookback=14):
                 dv = delivery_stats(ds, STORE_ID)
             except Exception:
                 pass
+        # 会员复购（当日 + 本月累计 + 近 3 月趋势，共 5 次请求；仅目标日拉）
+        mb = None
+        if is_tgt:
+            try:
+                mb = member_report(c, ds, STORE_ID)
+            except Exception:
+                mb = None
         # 损耗（报损单）
         lo = {"loss": 0, "base": 0, "detail": {}, "threshold": 0.35}
         try:
@@ -220,6 +228,7 @@ def pull(target_date=None, lookback=14):
             "discount_tables": len(dd.get("by_table") or []),
             "timeout": ts,
             "delivery": dv,
+            "member": mb,
             "sale": kd,
             "loss": lo.get("loss", 0),
             "loss_base": lo.get("base", 0),
