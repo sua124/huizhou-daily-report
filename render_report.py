@@ -858,6 +858,37 @@ def build_member(rows, out_path, store_label="13店（正佳广场店）"):
                     font=F(15), fill=INK3, anchor="ma")
         c.y = base + 224
 
+    # 日复购率（近 14 天，滚动 7 天口径）
+    daily = mb.get("daily") or []
+    if daily:
+        win = mb.get("daily_window", 7)
+        c.section(f"近 {len(daily)} 日复购率（滚动 {win} 天口径）", gap=12)
+        c.note(f"每根柱 = 该日往前 {win} 天累计的复购率；"
+               "单日「当天来两趟」几乎恒为 0，故用滚动窗口看趋势", size=18)
+        dmax = max((x["rate"] for x in daily), default=0) or 1
+        avg = sum(x["rate"] for x in daily) / len(daily)
+        base = c.y + 34
+        slot = (W - PAD * 2) / len(daily)
+        bar_w = min(slot * 0.52, 40)
+        # 均值基准线
+        avg_y = base + 140 - int(140 * avg / dmax)
+        dr.line([PAD, avg_y, W - PAD, avg_y], fill="#C9CFD6", width=1)
+        dr.text((W - PAD, avg_y - 22), f"均值 {avg:.2f}%", font=F(15), fill=INK3,
+                anchor="ra")
+        for i, x in enumerate(daily):
+            cx = PAD + i * slot + slot / 2
+            hbar = max(int(140 * x["rate"] / dmax), 3)
+            cur = i == len(daily) - 1
+            dr.rounded_rectangle([cx - bar_w / 2, base + 140 - hbar,
+                                  cx + bar_w / 2, base + 140], 3,
+                                 fill=ACCENT if cur else "#A9C4DC")
+            dr.text((cx, base + 140 - hbar - 18), f"{x['rate']:.1f}",
+                    font=F(13, True), fill=ACCENT if cur else INK2, anchor="ma")
+            dr.text((cx, base + 148), x["label"], font=F(13),
+                    fill=INK if cur else INK3, anchor="ma")
+        c.y = base + 178
+
+
     # 会员等级复购阶梯（本月累计，结构性因素）
     tiers = month.get("tiers") or []
     if tiers:
@@ -893,6 +924,7 @@ def build_member(rows, out_path, store_label="13店（正佳广场店）"):
         "口径：期内消费 ≥2 次记为复购（与后台「复购率汇总」一致）；"
         "首次消费人次 = 期内首次到店",
         "月度趋势为自然月累计；当前月为月初至今",
+        "日复购率 = 该日往前 7 天窗口累计口径（单日当天复购几乎恒为 0，不具观察价值）",
         "数据源：摩打后台 · 复购率汇总（repurchase）",
         f"生成时间 {datetime.datetime.now():%Y-%m-%d %H:%M}",
     ])

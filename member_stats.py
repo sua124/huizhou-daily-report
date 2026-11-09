@@ -46,6 +46,38 @@ def pull_repurchase(c, d1, d2, store_id):
     }
 
 
+def daily_trend(c, tgt, store_id, days=14, window=7, workers=4):
+    """
+    近 N 天的「日复购率」= 滚动窗口口径（默认 7 天）：
+    第 d 天的值 = [d-6, d] 这 7 天的复购率。
+    单日当天复购（同一天来两趟）几乎恒为 0，没有观察价值，所以用滚动窗口。
+    每天一次请求（共 days 次），多线程并发（每线程独立客户端，token 走缓存）。
+    """
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from moda_client import ModaClient
+
+    tgt = datetime.date.fromisoformat(tgt) if isinstance(tgt, str) else tgt
+    day_list = [tgt - datetime.timedelta(days=i) for i in range(days - 1, -1, -1)]
+    tlocal = threading.local()
+
+    def one(d):
+        cli = getattr(tlocal, "c", None)
+        if cli is None:
+            cli = ModaClient()
+            tlocal.c = cli
+        d1 = d - datetime.timedelta(days=window - 1)
+        s = pull_repurchase(cli, d1.isoformat(), d.isoformat(), store_id)
+        return {"date": d.isoformat(), "label": f"{d.month}/{d.day}",
+                "rate": s["rate"], "repeat": s["repeat"], "total": s["total"]}
+
+    try:
+        with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
+            return list(ex.map(one, day_list))
+    except Exception:
+        return []
+
+
 def member_report(c, tgt, store_id):
     """
     会员复购完整报告（共 5 次请求，只有目标日拉）：
@@ -68,7 +100,14 @@ def member_report(c, tgt, store_id):
     trend.append({"label": f"{month_start.month}月至今", "rate": month["rate"],
                   "repeat": month["repeat"], "total": month["total"]})
 
-    return {"date": tgt.isoformat(), "today": today, "month": month, "trend": trend}
+    # 近 14 日日复购率（滚动 7 天口径）
+    try:
+        daily = daily_trend(c, tgt, store_id)
+    except Exception:
+        daily = []
+
+    return {"date": tgt.isoformat(), "today": today, "month": month,
+            "trend": trend, "daily": daily, "daily_window": 7}
 
 
 if __name__ == "__main__":
