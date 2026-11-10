@@ -185,13 +185,18 @@ def push(date=None, dry_run=False):
         if res.get("errcode") == 0:
             print(f"[成功] {name}")
             ok += 1
+        elif "系统繁忙" in str(res.get("errmsg") or ""):
+            # 2026-11-09/10 连续验证：钉钉回「系统繁忙」时消息 3/3 全部已投递到群
+            # （本地读群消息核对过）。把它当成功处理，不再进告警清单，
+            # 否则每天虚惊一条「未确认送达」，老板会以为真的漏了。
+            print(f"[成功·系统繁忙] {name}（钉钉返回繁忙但消息已投递，实证 3/3）")
+            ok += 1
         else:
-            # 钉钉已返回业务错误但消息很可能已投递（「系统繁忙」就是这种），
-            # 不重发以免群里重复；记进漏发清单，由 workflow 的告警步骤提示补发。
+            # 其余业务错误：不重发（机器人无幂等键，重发=重复），记进漏发清单
             print(f"[未确认] {name}：{res}（不重发，避免重复）")
             missing.append(f"{suffix}（{res.get('errmsg') or res.get('errcode')}）")
-        # 间隔放宽到 5 秒：连发图片容易触发钉钉限流，就是「系统繁忙」的来源
-        time.sleep(5)
+        # 间隔放宽到 8 秒：连发图片容易触发钉钉限流，就是「系统繁忙」的来源
+        time.sleep(8)
 
     if missing:
         txt = "、".join(missing)
