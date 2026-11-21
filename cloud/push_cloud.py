@@ -150,8 +150,10 @@ def push(date=None, dry_run=False):
         parts = stem.split("_")
         suffix = parts[3] if len(parts) > 3 else stem
         key = f"{parts[2]}_{parts[3]}" if len(parts) > 3 else stem
-        # 标题里固定带「日报」二字：机器人安全设置若用「自定义关键词」也能通过
-        title = f"{LABEL}日报 {td[5:]} {suffix}"
+        # 标题里固定带「日报」二字：机器人安全设置若用「自定义关键词」也能通过。
+        # TITLE_SUFFIX：早报（次日复核）用，群里能区分当晚版和次日复核版
+        sfx = os.environ.get("TITLE_SUFFIX") or ""
+        title = f"{LABEL}日报 {td[5:]} {suffix}{sfx}"
 
         url = public_url(name, base)
         text = f"## {title}\n\n![]({url})\n"
