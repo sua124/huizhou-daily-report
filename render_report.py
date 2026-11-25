@@ -1043,8 +1043,26 @@ def build_member(rows, out_path, store_label="13店（正佳广场店）"):
     return c.save(out_path)
 
 
+def _stitch(top_path, bot_path, out_path, gap=40):
+    """两张图竖向拼成一张长图，中间加浅色分隔带（2026-11-26 老板要求合并为 2 张长图）"""
+    from PIL import Image
+    a, b = Image.open(top_path), Image.open(bot_path)
+    w = max(a.width, b.width)
+    canvas = Image.new("RGB", (w, a.height + gap + b.height), (245, 246, 248))
+    canvas.paste(a, (0, 0))
+    canvas.paste(b, (0, a.height + gap))
+    # 分隔带中间画一条淡线，视觉上区分两段
+    from PIL import ImageDraw
+    dr = ImageDraw.Draw(canvas)
+    mid = a.height + gap // 2
+    dr.line([(PAD, mid), (w - PAD, mid)], fill=LINE, width=2)
+    canvas.save(out_path)
+    return out_path
+
+
 def build_all(data_path, out_dir, store_label="13店（正佳广场店）"):
-    """生成三张图（赠菜折扣与菜品停开售合并为第 2 张），返回路径列表"""
+    """生成两张长图：01=经营概览+会员复购，02=赠菜折扣停开售+出品超时
+    （2026-11-26 老板要求合并；内部仍先按 4 段渲染再竖向拼接）"""
     rows = json.load(open(data_path, encoding="utf-8"))
     date = rows[-1]["date"]
     os.makedirs(out_dir, exist_ok=True)
@@ -1057,17 +1075,30 @@ def build_all(data_path, out_dir, store_label="13店（正佳广场店）"):
                 os.remove(os.path.join(out_dir, _old))
             except OSError:
                 pass
-    paths = []
     # 图 1 用 4 店式单页版式（含目标达成/损耗/近 7 日两张表）。
     # 延迟导入：render_v4 反过来要 import 本模块的字体与配色，避免循环引用。
     from render_v4 import build_page
+    tmp = os.path.join(out_dir, "_seg")
+    os.makedirs(tmp, exist_ok=True)
+    singles = []
     for fn, name in [(build_page, "01_经营概览"),
                      (build_discount, "02_赠菜折扣与停开售"),
                      (build_timeout, "03_出品超时"),
                      (build_member, "04_会员复购")]:
-        p = os.path.join(out_dir, f"report_{date}_{name}.png")
+        p = os.path.join(tmp, f"{name}.png")
         fn(rows, p, store_label)
+        singles.append(p)
+    # 拼接为两张长图
+    merges = [("01_经营概览与会员复购", singles[0], singles[3]),
+              ("02_赠菜折扣停开售与出品超时", singles[1], singles[2])]
+    paths = []
+    for name, top, bot in merges:
+        p = os.path.join(out_dir, f"report_{date}_{name}.png")
+        _stitch(top, bot, p)
         paths.append(p)
+    # 清掉中间产物
+    import shutil
+    shutil.rmtree(tmp, ignore_errors=True)
     return paths
 
 
