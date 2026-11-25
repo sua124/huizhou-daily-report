@@ -521,6 +521,39 @@ def build_discount(rows, out_path, store_label="13店（正佳广场店）"):
     # 菜品停/开售记录（与赠菜折扣合并为同一张图）
     sale_section(c, dr, last.get("sale") or {})
 
+    # 损耗前5（2026-11-25 老板新增：品名 + 金额含税）
+    lt5 = last.get("loss_top5") or []
+    c.section("当日损耗前5（品名 + 金额，含税）", gap=14)
+    if lt5:
+        hx = [PAD + 14, W - PAD - 220, W - PAD - 14]
+        dr.rectangle([PAD, c.y, W - PAD, c.y + 42], fill=CARD)
+        dr.text((hx[0], c.y + 10), "品名", font=F(19, True), fill=INK2)
+        dr.text((hx[1], c.y + 10), "金额（含税）", font=F(19, True), fill=INK2, anchor="ra")
+        dr.text((hx[2], c.y + 10), "占比", font=F(19, True), fill=INK2, anchor="ra")
+        c.y += 42
+        tot = float(last.get("loss_top5_total") or 0) or 1
+        for k, it in enumerate(lt5):
+            nm = it.get("name", "-")
+            if len(nm) > 26:
+                nm = nm[:25] + "…"
+            band = "#FDEDEC" if k == 0 else ("#FFFFFF" if k % 2 else CARD)
+            dr.rectangle([PAD, c.y, W - PAD, c.y + 46], fill=band)
+            dr.text((hx[0], c.y + 11), f"{k + 1}. {nm}", font=F(19),
+                    fill=UP if k == 0 else INK)
+            dr.text((hx[1], c.y + 11), f"{float(it.get('amount') or 0):,.2f} 元",
+                    font=F(20, True), fill=UP if k == 0 else INK, anchor="ra")
+            dr.text((hx[2], c.y + 12),
+                    f"{float(it.get('amount') or 0) / tot * 100:.1f}%",
+                    font=F(18), fill=INK3, anchor="ra")
+            dr.line([PAD, c.y + 46, W - PAD, c.y + 46], fill=LINE, width=1)
+            c.y += 46
+        c.note(f"当日报损 {last.get('loss_top5_orders', 0)} 单 · 含税合计 "
+               f"{float(last.get('loss_top5_total') or 0):,.2f} 元；"
+               "口径：按报损单创建日期（与图1红线损耗的库存口径略有差异）", size=17)
+    else:
+        c.note("当日无报损记录", size=20, gap=4)
+    c.y += 6
+
     c.footer([
         "数据源：摩打后台 · 数据中心　|　赠菜、折扣均为门店自担优惠",
         "停售口径：操作记录时间；「当日估清」多为系统次日自动恢复",
@@ -958,6 +991,45 @@ def build_member(rows, out_path, store_label="13店（正佳广场店）"):
             dr.line([PAD, c.y + 58, W - PAD, c.y + 58], fill=LINE, width=1)
             c.y += 62
         c.y += 6
+
+    # 餐后评价 + 私信老板（2026-11-25 老板新增）
+    ev = last.get("evaluate")
+    if ev:
+        c.section(f"当日餐后评价（{last['date']}）", gap=14)
+        bad_col = UP if ev.get("bad", 0) else INK
+        c.kpi_row([
+            ("评价总数", f"{ev.get('total', 0)}", "扫码评价", INK),
+            ("差评条数", f"{ev.get('bad', 0)}", "1~2 星", bad_col),
+            ("好评条数", f"{ev.get('good', 0)}", "4~5 星",
+             DOWN if ev.get("good", 0) else INK),
+            ("差评率", f"{ev.get('bad_rate', 0):.1f}%",
+             f"差评 {ev.get('bad', 0)} 条 / 评价 {ev.get('total', 0)} 条",
+             UP if ev.get("bad_rate", 0) > 0 else INK),
+        ], big=False)
+        c.kpi_row([
+            ("全月评价总数", f"{ev.get('m_total', 0)}", "本月累计", INK),
+            ("全月差评条数", f"{ev.get('m_bad', 0)}", "本月累计", bad_col if ev.get("m_bad") else INK),
+            ("全月好评条数", f"{ev.get('m_good', 0)}", "本月累计",
+             DOWN if ev.get("m_good") else INK),
+            ("全月差评率", f"{ev.get('m_bad_rate', 0):.1f}%", "差评 ÷ 评价总数",
+             UP if ev.get("m_bad_rate", 0) > 0 else INK),
+        ], big=False)
+        if not ev.get("total"):
+            c.note("当日无评价记录", size=18)
+
+    dm = last.get("dm")
+    if dm:
+        c.section(f"当日私信老板（{last['date']}）", gap=14)
+        c.kpi_row([
+            ("私信总数", f"{dm.get('total', 0)}", "扫码私信", INK),
+            ("投诉批评", f"{dm.get('complaint', 0)}", "需要当天跟进处理",
+             UP if dm.get("complaint", 0) else INK),
+            ("表扬认同", f"{dm.get('praise', 0)}", "值得表扬的好人好事",
+             DOWN if dm.get("praise", 0) else INK),
+            ("其他反馈", f"{dm.get('other', 0)}", "发票、失物等", INK),
+        ], big=False)
+        if not dm.get("total"):
+            c.note("当日无私信老板记录", size=18)
 
     c.footer([
         "口径：期内消费 ≥2 次记为复购（与后台「复购率汇总」一致）；"

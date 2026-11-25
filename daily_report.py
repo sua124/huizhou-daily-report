@@ -14,8 +14,9 @@ from discount_detail import pull_discount_detail
 from timeout_top import timeout_stats
 from delivery_late import delivery_stats
 from sale_operate import pull_sale_operate
-from loss import pull_loss
+from loss import pull_loss, loss_top5
 from member_stats import member_report
+from evaluate_stats import evaluate_report, dm_report
 
 _CFG = {}
 _FULL_CFG = {}
@@ -97,14 +98,31 @@ def pull(target_date=None, lookback=14):
     # 目标日单独查
     base_rows.update(fetch_pool(tgt.isoformat(), tgt.isoformat()))
 
-    # 月累计实收：只查「月初 → 昨天」这段历史区间（区间含今天会把今天算两遍）
+    # 月累计实收/开台数：只查「月初 → 昨天」这段历史区间（区间含今天会把今天算两遍）
     month_key = tgt.strftime("%Y-%m")
     month_start = tgt.replace(day=1)
     month_pay = 0.0
+    month_open = 0.0
     if month_start <= prev_day:
         for _d, _r in fetch_pool(month_start.isoformat(), prev_day.isoformat()).items():
             if _d.startswith(month_key):
                 month_pay += float(_r.get("pay_price") or 0)
+                month_open += float(_r.get("table_open") or 0)
+
+    # 去年同期开台数（去年同月 1 日 ~ 同日；惠州店 2025-11 起有数据）
+    last_year_open = 0.0
+    try:
+        ly = tgt.year - 1
+        r_ly = c.post("/admin/food_analysis/storeBusinessPool", {
+            "date_arr": [f"{ly}-{tgt.month:02d}-01", f"{ly}-{tgt.month:02d}-{tgt.day:02d}"],
+            "store_ids": [STORE_ID], "order": "store_date", "row_show": "store_date",
+        })
+        for row in (r_ly.get("data") or {}).get("list", []):
+            if row.get("store_id") == STORE_ID and str(row.get("store_name", "")).strip() != "合计":
+                last_year_open += float(row.get("table_open") or 0)
+    except Exception:
+        pass
+    last_year_open = round(last_year_open)
 
     rows = []
 
@@ -195,6 +213,25 @@ def pull(target_date=None, lookback=14):
             lo = pull_loss(c, ds, STORE_ID)
         except Exception:
             pass
+        # 损耗前5（品名+金额含税，按当天报损单聚合；仅目标日，~10 次请求）
+        lt5 = {"top5": [], "total": 0, "orders": 0}
+        if is_tgt:
+            try:
+                lt5 = loss_top5(c, ds, STORE_ID)
+            except Exception:
+                pass
+        # 餐后评价 + 私信老板（仅目标日，~5 次请求）
+        ev = None
+        dm = None
+        if is_tgt:
+            try:
+                ev = evaluate_report(c, ds, STORE_ID)
+            except Exception:
+                ev = None
+            try:
+                dm = dm_report(c, ds, STORE_ID)
+            except Exception:
+                dm = None
         # 堂食 / 外卖实收拆分（后台直接给堂食口径，外卖=总额减堂食）
         _pay = float(b.get("pay_price") or 0)
         _dine_pay = float(b.get("in_pay_price") or 0)
@@ -233,6 +270,11 @@ def pull(target_date=None, lookback=14):
             "loss": lo.get("loss", 0),
             "loss_base": lo.get("base", 0),
             "loss_threshold": lo.get("threshold", 0.35),
+            "loss_top5": lt5.get("top5", []),
+            "loss_top5_total": lt5.get("total", 0),
+            "loss_top5_orders": lt5.get("orders", 0),
+            "evaluate": ev,
+            "dm": dm,
             "target": target_for(ds),
             "dine_pay": _dine_pay,
             "takeout_pay": _take_pay,
@@ -264,6 +306,8 @@ def pull(target_date=None, lookback=14):
     if rows:
         rows[-1]["month_pay"] = round(month_pay + float(rows[-1].get("pay") or 0), 2)
         rows[-1]["month_target"] = float(TARGETS.get("month") or 0)
+        rows[-1]["month_table_open"] = round(month_open + float(rows[-1].get("table_open") or 0))
+        rows[-1]["last_year_open"] = last_year_open
 
     path = os.path.join(DATA, f"report_{tgt.isoformat()}.json")
     json.dump(rows, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=1)

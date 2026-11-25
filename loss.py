@@ -10,7 +10,7 @@
   store_group[0].current_total_price  该店本期实收口径
   loss_rate_threshold                 损耗率红线（0.35，单位 %）
 """
-import sys, os
+import sys, os, json
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -45,8 +45,69 @@ def pull_loss(client, ds, store_id, ds_end=None):
     }
 
 
+def loss_top5(client, ds, store_id):
+    """损耗前5（品名 + 金额含税）
+
+    口径（2026-11-25 老板要求新增）：
+    - 取当天创建的报损单（/admin/scm_product_stock_verify/loss，created_at 日期=当天，
+      loss_amount>0），逐单拉明细（/detail 的 cont 字段）；
+    - 按商品名聚合「含税金额」= 明细里的 original_amount（含税单价×数量，原价口径），
+      无含税价时退回 loss_price（不含税）；
+    - 注意：与 lossStatistics 的官方损耗总额日期归属有差异（官方按库存口径），
+      本接口用于「当日哪些损耗最多」的排行展示，不作红线判定。
+    返回 {'top5': [{'name','amount','num'}...], 'total': 当日含税合计, 'orders': 单数}
+    """
+    orders = []
+    page = 1
+    while True:
+        r = client.post("/admin/scm_product_stock_verify/loss",
+                        {"store_ids": [store_id], "page": page, "limit": 200})
+        lst = r.get("data") or []
+        if not lst:
+            break
+        done = False
+        for x in lst:
+            day = (x.get("created_at") or "")[:10]
+            if day < ds:          # 列表按 created_at 倒序，越过目标日即可停
+                done = True
+                break
+            if day == ds and float(x.get("loss_amount") or 0) > 0:
+                orders.append(x)
+        if done or len(lst) < 200:
+            break
+        page += 1
+        if page > 20:
+            break
+
+    agg = {}
+    total = 0.0
+    for o in orders:
+        try:
+            rr = client.post("/admin/scm_product_stock_verify/detail",
+                             {"id": o.get("id")})
+            info = (rr.get("data") or {}).get("info") or {}
+            cont = json.loads(info.get("cont") or "[]")
+        except Exception:
+            continue
+        for g in cont:
+            name = (g.get("name") or "?").strip()
+            amt = float(g.get("original_amount") or 0) or float(g.get("loss_price") or 0)
+            num = float(g.get("num") or 0)
+            it = agg.setdefault(name, {"name": name, "amount": 0.0, "num": 0.0})
+            it["amount"] += amt
+            it["num"] += num
+            total += amt
+
+    top = sorted(agg.values(), key=lambda z: -z["amount"])[:5]
+    for it in top:
+        it["amount"] = round(it["amount"], 2)
+        it["num"] = round(it["num"], 1)
+    return {"top5": top, "total": round(total, 2), "orders": len(orders)}
+
+
 if __name__ == "__main__":
     from moda_client import ModaClient
     ds = sys.argv[1] if len(sys.argv) > 1 else "2026-11-04"
     sid = int(sys.argv[2]) if len(sys.argv) > 2 else 42
     print(pull_loss(ModaClient(), ds, sid))
+    print(json.dumps(loss_top5(ModaClient(), ds, sid), ensure_ascii=False, indent=1))

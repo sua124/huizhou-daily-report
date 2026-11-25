@@ -294,45 +294,61 @@ def build_page(rows, out_path, store_label="惠州店",
                      pctv(sum_loss, sum_pay)],
             colors=color_fn)
 
-    # ===== 近 7 日：营业额达成 =====
-    p.section("近 7 日营业额达成（单位：元）")
-    headers2 = ["日期", "当日目标", "实收", "达成率", "差额"]
-    widths2 = [168, 196, 196, 172, 252]
-    body2 = []
-    sum_t, sum_p = 0, 0
-    for r in last7:
-        t = float(r.get("target") or 0)
-        py = float(r.get("pay") or 0)
-        sum_t += t
-        sum_p += py
-        rt = py / t * 100 if t else None
-        body2.append([r["date"][5:], money(t) if t else "-", m2(py),
-                      f"{rt:.1f}%" if rt is not None else "-",
-                      f"{py - t:+,.2f}" if t else "-"])
+    # ===== 外卖平台（2026-11-25 新增：单数/应收/实收/毛利率）=====
+    chans = last.get("channels") or []
+    if chans:
+        p.section("外卖平台")
+        headers_c = ["平台", "单数", "营收（应收）", "实收", "毛利率"]
+        widths_c = [200, 160, 240, 240, 240]
+        body_c, sum_o, sum_r, sum_p2 = [], 0, 0.0, 0.0
+        for ch in chans:
+            o, rv, py2 = ch.get("orders", 0), float(ch.get("revenue") or 0), float(ch.get("pay") or 0)
+            sum_o += o; sum_r += rv; sum_p2 += py2
+            rate = py2 / rv * 100 if rv else None
+            body_c.append([ch.get("name", "-"), f"{o:,}", m2(rv), m2(py2),
+                           f"{rate:.1f}%" if rate is not None else "-"])
+        if sum_o or sum_r:
+            body_c.append(["外卖合计", f"{sum_o:,}", m2(sum_r), m2(sum_p2),
+                           f"{sum_p2 / sum_r * 100:.1f}%" if sum_r else "-"])
 
-    def color2(i, col, v):
-        if col == 4:  # 差额：超了绿、差了红
+        def color_c(i, col, v):
+            if col != 4:
+                return None
             try:
-                return DOWN if float(str(v).replace(",", "")) >= 0 else UP
+                x = float(str(v).rstrip("%"))
             except ValueError:
                 return None
-        if col != 3:
-            return None
-        try:
-            x = float(str(v).rstrip("%"))
-        except ValueError:
-            return None
-        return DOWN if x >= 100 else (UP if x < 95 else "#C77C02")
+            # 毛利率 = 实收 ÷ 应收；<60% 标红
+            return UP if x < 60 else ACCENT
 
-    p.table(headers2, body2, widths2,
-            aligns=["left", "right", "right", "right", "right"],
-            sum_row=["合计", money(sum_t), m2(sum_p),
-                     f"{sum_p / sum_t * 100:.1f}%" if sum_t else "-",
-                     f"{sum_p - sum_t:+,.2f}" if sum_t else "-"],
-            colors=color2)
+        p.table(headers_c, body_c, widths_c,
+                aligns=["left", "right", "right", "right", "right"],
+                colors=color_c)
+        p.note("毛利率 = 实收 ÷ 应收；红字为低于 60%", size=17, gap=6)
+
+    # ===== 客流与开台（2026-11-25 新增）=====
+    people = int(last.get("people") or 0)
+    people_avg = float(last.get("people_avg") or 0)
+    turnover = float(last.get("turnover") or 0)
+    month_open = float(last.get("month_table_open") or 0)
+    ly_open = float(last.get("last_year_open") or 0)
+    open_rate = month_open / ly_open * 100 if ly_open else None
+    p.section("客流与开台")
+    p.cards([
+        {"label": "顾客（人）", "value": f"{people:,}",
+         "sub": f"人均消费 ¥{m2(people_avg)}"},
+        {"label": "翻台率（次/桌）", "value": f"{turnover:.2f}",
+         "sub": f"开台 {last.get('table_open', 0):,} ÷ 实际桌数 {last.get('table_count', 0)}"},
+        {"label": "本月累计开台数", "value": f"{month_open:,.0f}",
+         "sub": f"去年同期 {ly_open:,.0f}" if ly_open else "去年同期无数据"},
+        {"label": "开台数达成",
+         "value": f"{open_rate:.1f}%" if open_rate is not None else "-",
+         "color": UP if (open_rate is not None and open_rate < 80) else ACCENT,
+         "sub": "本月累计 ÷ 去年同期开台数"},
+    ], cols=4, height=122)
 
     p.note("说明：营业额、目标达成均按实收口径；损耗取后台报损单；超时按 KDS 出品时长，"
-           "堂食 >20 分、外卖 >15 分。",
+           "堂食 >20 分、外卖 >15 分；翻台率=开台数÷实际营业桌数；毛利率=实收÷应收。",
            gap=6)
     p.note(f"生成时间 {datetime.datetime.now():%Y-%m-%d %H:%M} · 数据来源 摩打后台", gap=0)
     return p.save(out_path)
