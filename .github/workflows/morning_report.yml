@@ -2,10 +2,10 @@ name: 惠州店经营日报·晨间复核
 
 on:
   schedule:
-    # 每天 UTC 01:10（北京 09:10）触发，任务启动后原地等到北京 10:00 才拉数据。
+    # 每天 UTC 23:00（北京 07:00）触发，任务启动后原地等到北京 09:00 才拉数据。
     # 和晚报同一个套路：cron 提前触发占队，把 GitHub 排队延迟全部吸收进等待时间。
-    # 早上 10 点重发「昨天」的数据 —— 隔夜结账更完整，数字比前一晚更准。
-    - cron: '10 1 * * *'
+    # ⚠️ 2026-11-25 老板把复核时间从 10:00 提前到 09:00，统一每天（含周末）。
+    - cron: '0 23 * * *'
   workflow_dispatch:          # 手动补跑：Actions 页面点 Run workflow
     inputs:
       date:
@@ -66,29 +66,31 @@ jobs:
           echo "RPT_DATE=$D" >> "$GITHUB_ENV"
           echo "本次晨间复核日期：$D"
 
-      - name: 等到北京时间 10:00（吸收 GitHub cron 延迟）
+      - name: 等到北京时间 09:00（吸收 GitHub cron 延迟）
         if: github.event_name == 'schedule'
         run: |
           python - <<'PY'
           import datetime, sys, time
 
-          TARGET_H, TARGET_M = 2, 0            # UTC 02:00 = 北京 10:00
           MAX_WAIT = 150 * 60                  # 等待上限，异常情况不无限挂
 
-          now = datetime.datetime.now(datetime.timezone.utc)
-          tgt = now.replace(hour=TARGET_H, minute=TARGET_M, second=0, microsecond=0)
-          wait = (tgt - now).total_seconds()
+          # 用北京时间判断，cron 在 UTC 前一天 23:00 触发也不会算错
+          now_utc = datetime.datetime.now(datetime.timezone.utc)
+          bj = now_utc + datetime.timedelta(hours=8)
+          tgt = bj.replace(hour=9, minute=0, second=0, microsecond=0)
+          wait = (tgt - bj).total_seconds()
 
           if wait <= 0:
-              print(f"当前 UTC {now:%H:%M}，已过 10:00，立即开始（说明本次延迟较大）")
+              print(f"当前北京 {bj:%H:%M}，已过 09:00，立即开始（说明本次延迟较大）")
               sys.exit(0)
           if wait > MAX_WAIT:
               print(f"距目标还有 {wait/60:.0f} 分钟，超过等待上限，立即开始")
               sys.exit(0)
 
-          print(f"当前 UTC {now:%H:%M}，等待 {wait:.0f} 秒（{wait/60:.0f} 分钟）到北京 10:00")
+          print(f"当前北京 {bj:%H:%M}，等待 {wait:.0f} 秒（{wait/60:.0f} 分钟）到 09:00")
           time.sleep(int(wait))
-          print(f"已到 {datetime.datetime.now(datetime.timezone.utc):%H:%M} UTC，开始拉昨日数据")
+          bj2 = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=8)
+          print(f"已到北京时间 {bj2:%H:%M}，开始拉昨日数据")
           PY
 
       - name: 昨日早报是否已推送（独立幂等锁，与晚报互不干扰）

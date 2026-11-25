@@ -8,15 +8,17 @@ on:
     #   GitHub 免费版 schedule 不是准点执行 —— 它把任务丢进队列，实测延迟 5 分钟到
     #   近 1 小时（11-04 那次 22:07 触发，run 到 22:56 才建出来，到群 23:00）。
     #   所以 cron 定几点，决定不了群里几点收到。
-    # 现在的做法：cron 提前 2 小时触发，任务启动后原地等到北京 22:12 才开始拉数据，
-    #   把排队/延迟全部吸收进等待时间 —— 不管早到还是晚到，都是 22:12 开跑、22:20 前后到群。
-    # 22:00 收档，22:12 拉数据能保证当日流水已结完，不会少算尾段。
-    - cron: '10 12 * * 1-5'   # 工作日 20:10 触发 → 等到 22:12 开跑
-    - cron: '20 12 * * 6,0'   # 周末   20:20 触发 → 等到 22:12 开跑
+    # 现在的做法：cron 提前约 2 小时触发，任务启动后原地等到北京时间目标点才开始拉数据，
+    #   把排队/延迟全部吸收进等待时间 —— 不管早到还是晚到，都准点开跑。
+    # ⚠️ 2026-11-25 老板改时间：工作日（周一~周五）21:30 开跑；周末 22:00 开跑。
+    #   门店 21:30 营业结束，21:30 起拉数据能收到当日全量流水；
+    #   图片约 2~4 分钟后到群（拉数+画图+归档+CDN）。
+    - cron: '30 11 * * 1-5'   # 工作日 19:30 触发 → 等到 21:30 开跑
+    - cron: '0 12 * * 6,0'    # 周末   20:00 触发 → 等到 22:00 开跑
   workflow_dispatch:          # 手动补跑：Actions 页面点 Run workflow
     inputs:
       date:
-        description: '日报日期 YYYY-MM-DD，留空=今天（留空会等到 22:12 再跑）'
+        description: '日报日期 YYYY-MM-DD，留空=今天（留空会等到当日目标时间再跑）'
         required: false
         default: ''
       dry_run:
@@ -69,30 +71,36 @@ jobs:
       - name: 安装依赖
         run: pip install -r requirements.txt
 
-      - name: 等到北京时间 22:12（吸收 GitHub cron 延迟）
+      - name: 等到当日目标时间（工作日 21:30 / 周末 22:00，吸收 GitHub cron 延迟）
         # 定时触发、以及「手动跑今天」时都要等；只有补跑历史日期才立刻跑
         if: github.event_name == 'schedule' || github.event.inputs.date == ''
         run: |
           python - <<'PY'
           import datetime, sys, time
 
-          TARGET_H, TARGET_M = 14, 12          # UTC 14:12 = 北京 22:12
           MAX_WAIT = 150 * 60                  # 等待上限，异常情况不无限挂
 
-          now = datetime.datetime.now(datetime.timezone.utc)
-          tgt = now.replace(hour=TARGET_H, minute=TARGET_M, second=0, microsecond=0)
-          wait = (tgt - now).total_seconds()
+          # 一律用北京时间判断，避免 UTC 跨日算错
+          now_utc = datetime.datetime.now(datetime.timezone.utc)
+          bj = now_utc + datetime.timedelta(hours=8)
+          workday = bj.weekday() < 5           # 0=周一 … 6=周日
+          target_h, target_m = (21, 30) if workday else (22, 0)
+          tgt = bj.replace(hour=target_h, minute=target_m,
+                           second=0, microsecond=0)
+          wait = (tgt - bj).total_seconds()
 
+          label = "工作日 21:30" if workday else "周末 22:00"
           if wait <= 0:
-              print(f"当前 UTC {now:%H:%M}，已过 22:12，立即开始（说明今天延迟较大）")
+              print(f"当前北京 {bj:%H:%M}，已过目标 {label}，立即开始（说明今天延迟较大）")
               sys.exit(0)
           if wait > MAX_WAIT:
               print(f"距目标还有 {wait/60:.0f} 分钟，超过等待上限，立即开始")
               sys.exit(0)
 
-          print(f"当前 UTC {now:%H:%M}，等待 {wait:.0f} 秒（{wait/60:.0f} 分钟）到北京 22:12")
+          print(f"当前北京 {bj:%H:%M}，等待 {wait:.0f} 秒（{wait/60:.0f} 分钟）到{label}")
           time.sleep(int(wait))
-          print(f"已到 {datetime.datetime.now(datetime.timezone.utc):%H:%M} UTC，开始拉当日数据")
+          bj2 = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=8)
+          print(f"已到北京时间 {bj2:%H:%M}，开始拉当日数据")
           PY
 
       - name: 今日是否已推送（幂等锁，防重复发群）
