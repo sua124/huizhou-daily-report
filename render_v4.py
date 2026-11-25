@@ -13,7 +13,8 @@ import datetime
 from PIL import Image, ImageDraw
 
 from render_report import (W, PAD, CARD, INK, INK2, INK3, LINE, ACCENT,
-                           UP, DOWN, HILITE, HILITE_BG, F, money)
+                           UP, DOWN, HILITE, HILITE_BG, F, money,
+                           LOSS_RED, TIMEOUT_RED)
 
 DARK = "#16233A"          # 页头深蓝
 DARK_SUB = "#93A8C0"
@@ -214,7 +215,8 @@ def build_page(rows, out_path, store_label="惠州店",
     # ===== 第三组：赠菜与损耗 =====
     loss = float(last.get("loss") or 0)
     loss_rate = loss / pay * 100 if pay else 0
-    thr = float(last.get("loss_threshold") or 0.35)
+    # 2026-11-25 老板定标：损耗占实收 >0.3% 标红（后台 0.35 仅参考，不再作为红线）
+    thr = LOSS_RED
     p.cards([
         {"label": "赠菜金额（元）", "value": m2(last.get("send")),
          "sub": f"赠送 {last.get('send_qty', 0)} 份"},
@@ -244,7 +246,7 @@ def build_page(rows, out_path, store_label="惠州店",
          "color": UP if ts.get("timeout") else INK,
          "sub": f"堂食>{thr_dine}分/外卖>{thr_take}分 · {over_chg}"},
         {"label": "超时占比", "value": f"{ts.get('rate', 0):.2f}%",
-         "color": UP if ts.get("rate", 0) > 3 else INK,
+         "color": UP if ts.get("rate", 0) > TIMEOUT_RED else INK,
          "sub": f"平均出品 {(ts.get('dine') or {}).get('avg', 0):.1f} 分（堂食）"},
         {"label": "超时高峰时段", "value": peak_txt, "sub": peak_sub},
     ], cols=4, height=122)
@@ -270,10 +272,10 @@ def build_page(rows, out_path, store_label="惠州店",
         ])
 
     def color_fn(i, col, v):
-        """损耗% 超红线标红；赠菜% 超 1% 标橙红"""
+        """损耗% 超 0.3% 标红；赠菜% 超 1% 标橙红（2026-11-25 老板定标）"""
         if col == 7:
             try:
-                return UP if float(str(v).rstrip("%")) > 0.35 else INK
+                return UP if float(str(v).rstrip("%")) > LOSS_RED else INK
             except ValueError:
                 return INK
         if col == 3:

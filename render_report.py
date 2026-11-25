@@ -21,6 +21,10 @@ DOWN = "#1E8449"
 LINE = "#E5E7EB"
 # 传菜时效红线（分钟）：出品完成 → 传菜完成（纯上桌环节）
 LATE_MIN = 3
+# 2026-11-25 老板定标：损耗占实收 >0.3% 标红、超时占比 >1% 标红
+# （后台返回的 loss_rate_threshold=0.35 不再作为红线，仅作参考）
+LOSS_RED = 0.30
+TIMEOUT_RED = 1.0
 # 实收金额高亮色
 HILITE = "#C0392B"
 HILITE_BG = "#FDEDEC"
@@ -624,7 +628,7 @@ def build_timeout(rows, out_path, store_label="13店（正佳广场店）"):
          UP if ts["timeout"] else INK),
         ("超时率", f"{ts['rate']:.2f}%",
          f"堂食 {dn.get('rate', 0):.2f}% · 外卖 {tk.get('rate', 0):.2f}%",
-         UP if ts["rate"] > 3 else ACCENT),
+         UP if ts["rate"] > TIMEOUT_RED else ACCENT),
         ("平均出品时长", f"{ts['avg']:.1f} 分",
          f"中位 {ts.get('median', 0):.1f} 分 · 最长 {ts.get('max', 0)} 分", INK),
     ], big=False)
