@@ -1043,10 +1043,13 @@ def build_member(rows, out_path, store_label="13店（正佳广场店）"):
     return c.save(out_path)
 
 
-def _stitch(top_path, bot_path, out_path, gap=40):
-    """两张图竖向拼成一张长图，中间加浅色分隔带（2026-11-26 老板要求合并为 2 张长图）"""
+def _stitch(top_path, bot_path, out_path, gap=40, crop_bot=0):
+    """两张图竖向拼成一张长图，中间加浅色分隔带（2026-11-26 老板要求合并为 2 张长图）。
+    crop_bot：裁掉下段顶部 N 像素——用于去掉第二段的页头（190px），只保留最上面的页头"""
     from PIL import Image
     a, b = Image.open(top_path), Image.open(bot_path)
+    if crop_bot:
+        b = b.crop((0, crop_bot, b.width, b.height))
     w = max(a.width, b.width)
     canvas = Image.new("RGB", (w, a.height + gap + b.height), (245, 246, 248))
     canvas.paste(a, (0, 0))
@@ -1088,13 +1091,13 @@ def build_all(data_path, out_dir, store_label="13店（正佳广场店）"):
         p = os.path.join(tmp, f"{name}.png")
         fn(rows, p, store_label)
         singles.append(p)
-    # 拼接为两张长图
+    # 拼接为两张长图（下段页头 190px 裁掉，只保留最上面那个页头）
     merges = [("01_经营概览与会员复购", singles[0], singles[3]),
               ("02_赠菜折扣停开售与出品超时", singles[1], singles[2])]
     paths = []
     for name, top, bot in merges:
         p = os.path.join(out_dir, f"report_{date}_{name}.png")
-        _stitch(top, bot, p)
+        _stitch(top, bot, p, crop_bot=190)
         paths.append(p)
     # 清掉中间产物
     import shutil
