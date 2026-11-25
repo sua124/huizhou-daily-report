@@ -722,7 +722,7 @@ def build_timeout(rows, out_path, store_label="13店（正佳广场店）"):
     tops = ts.get("top") or []
     if tops:
         c.section("超时最久 TOP 10", gap=10)
-        c.note("KDS 出品记录不含订单号，按菜品 + 出品时段定位", size=18)
+        c.note("出单时刻 = KDS 出餐确认时间，精确到分（按出单时间定位，非下单时间）", size=18)
         for i, t in enumerate(tops[:10]):
             nm = t["name"]
             if len(nm) > 18:
@@ -736,8 +736,15 @@ def build_timeout(rows, out_path, store_label="13店（正佳广场店）"):
             dr.text((PAD + 42, c.y + 4), nm, font=F(21), fill=INK)
             dr.text((W - PAD - 8, c.y + 4), f"{mins:.1f} 分", font=F(22, True),
                     fill=UP, anchor="ra")
-            hr = t.get("hour")
-            when = f"{hr:02d}:00 时段" if isinstance(hr, (int, float)) else "时段未知"
+            serve = t.get("serve")
+            ordered = t.get("ordered")
+            if serve and ordered:
+                when = f"下单 {ordered} → 出单 {serve}"
+            elif serve:
+                when = f"出单 {serve}"
+            else:
+                hr = t.get("hour")
+                when = f"{hr:02d}:00 时段" if isinstance(hr, (int, float)) else "出单时刻未知"
             dr.text((PAD + 42, c.y + 32),
                     f"{t.get('kind_name', '堂食')} · {when} · 红线 {t.get('limit', thr_dine)} 分",
                     font=F(17), fill=INK3)
@@ -765,12 +772,12 @@ def build_timeout(rows, out_path, store_label="13店（正佳广场店）"):
                     font=F(18, True), fill=UP, anchor="ra")
         c.y += ((len(bn[:6]) + 1) // 2) * 40 + 16
 
-    # 出品时段分布（全部出品道数，超时部分标红）
+    # 出品时段分布（按出单时间分桶，全部出品道数，超时部分标红）
     peak = ts.get("peak") or []
     over_map = dict(ts.get("peak_over") or [])
     if peak:
         c.section("出品时段分布", gap=10)
-        c.note("柱高 = 该时段出品道数，红色段为其中超时的道数", size=18)
+        c.note("柱高 = 该时段出品道数（按出单时间），红色段为其中超时的道数", size=18)
         pmax = max(v for _, v in peak) or 1
         base = c.y + 20
         slot = (W - PAD * 2) / max(len(peak), 1)

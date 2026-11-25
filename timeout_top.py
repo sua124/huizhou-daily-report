@@ -17,15 +17,21 @@
 2. 早期版本用 deliverStatistics 的「下单 → 传菜完成(deliver_at)」当出品时长，
    把传菜、顾客取餐的时间也算进了厨房，超时率被严重放大
    （11-04 曾算出 34 道超时，按出品口径实际只有 2 道）。
-3. kdsStatis 本身不带时间戳，只能靠 date_arr 带时分秒切片反推出品时段，
-   所以时段分布是额外打 24 次请求换来的；切片会漏整点边界记录，
-   因此「全量」仍以不带时分秒的那次为准，切片只用来补 hour 字段。
+
+出单时刻（2026-11-26 新增，老板要求精确到几分）：
+    kdsStatis 依然不带时间戳，但 /admin/kds_operate_record/index（KDS 出餐记录）有：
+      - order_food_id == kdsStatis.id（11-24 实测 361/394 命中）
+      - created_at = 出餐确认时刻（精确到秒）＝「出单时间」
+      - order_date = 下单时刻
+      - 校验：created_at - order_date == use_time，361 条全部一致（±65s 容差内 0 例外）
+    过滤参数：**store_id（单数！）** + date_arr（复数的 store_ids 不生效，会返回全部门店）
+    status: 1=出餐, 2=撤回（撤回的取重出餐那条）。多条同 order_food_id 取最新一条。
+    替代了原来 24 次逐小时切片（又慢又只有下单小时粗粒度）。
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from moda_client import ModaClient
 from collections import Counter, defaultdict
-from concurrent.futures import ThreadPoolExecutor
 
 # 分订单类型的超时红线（分钟）
 DINE_LIMIT_MIN = 20      # 堂食
@@ -58,40 +64,49 @@ def _pull_all(c, ds, store_id):
     return r.get("data") or []
 
 
-def _hour_map(c, ds, store_id, workers=6):
+def _serve_map(c, ds, store_id):
     """
-    逐小时切片，返回 {记录id: 小时}。用于还原出品时段。
-
-    注意：这是 24 次请求，只对「需要画时段分布的那一天」调用（见 with_hour）。
-    并发 6 路 —— 顺序跑时云端每个请求几百毫秒，24 次能把整条流水线拖到十几分钟。
+    拉当日 KDS 出餐记录，返回 {order_food_id: {"serve": "HH:MM", "ordered": "HH:MM", "ts": datetime}}。
+    「出单时间」= created_at（出餐确认时刻），老板 2026-11-26 指定按时段展示出单时间。
+    每天约 400-500 条，1-2 页拿完，替代原来的 24 次逐小时切片。
     """
-    def one(h):
-        a = f"{ds} {h:02d}:00:00"
-        b = f"{ds} {h:02d}:59:59"
-        try:
-            d = c.post("/admin/food_analysis/kdsStatis", {
-                "date_arr": [a, b], "store_ids": [store_id],
-            }).get("data") or []
-        except Exception:
-            return h, []
-        return h, d
-
-    hm = {}
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        for h, d in ex.map(one, range(24)):
-            for x in d:
-                hm[x.get("id")] = h
-    return hm
+    out = {}
+    page = 1
+    while True:
+        r = c.post("/admin/kds_operate_record/index", {
+            "store_id": store_id, "date_arr": [ds, ds], "page": page, "limit": 500,
+        })
+        lst = r.get("data") or []
+        for x in lst:
+            if int(x.get("status") or 0) != 1:      # 2=撤回
+                continue
+            ofid = x.get("order_food_id")
+            ca = (x.get("created_at") or "")[:19]
+            od = (x.get("order_date") or "")[:19]
+            cur = out.get(ofid)
+            # 同一菜品多条（撤回后重出餐）取最新一条
+            if cur is None or ca > cur["raw"]:
+                out[ofid] = {
+                    "raw": ca,
+                    "serve": ca[11:16] if len(ca) >= 16 else None,
+                    "ordered": od[11:16] if len(od) >= 16 else None,
+                    "hour": int(ca[11:13]) if len(ca) >= 13 and ca[11:13].isdigit() else None,
+                }
+        total = int(r.get("count") or 0)
+        if page * 500 >= total or not lst:
+            break
+        page += 1
+    return out
 
 
 def pull_kds(ds, store_id=42, with_hour=True, client=None):
-    """拉取当日出品明细，附带订单类型与出品时长"""
+    """拉取当日出品明细，附带订单类型、出品时长与出单时刻"""
     c = client or ModaClient()
     raw = _pull_all(c, ds, store_id)
     if not raw:
         return [], 0
 
-    hm = _hour_map(c, ds, store_id) if with_hour else {}
+    sm = _serve_map(c, ds, store_id) if with_hour else {}
 
     items, dropped = [], 0
     for x in raw:
@@ -102,6 +117,7 @@ def pull_kds(ds, store_id=42, with_hour=True, client=None):
             dropped += 1
             continue
         mins = secs / 60.0
+        sv = sm.get(x.get("id")) or {}
         items.append({
             "id": x.get("id"),
             "food_id": x.get("food_id"),
@@ -113,7 +129,10 @@ def pull_kds(ds, store_id=42, with_hour=True, client=None):
             "secs": secs,
             "mins": int(round(mins)),
             "exact": round(mins, 1),
-            "hour": hm.get(x.get("id")),
+            # hour = 出单（出餐确认）小时，用于时段分布；serve/ordered 精确到分
+            "hour": sv.get("hour"),
+            "serve": sv.get("serve"),
+            "ordered": sv.get("ordered"),
             "over": secs > _limit(ot) * 60,
         })
     return items, dropped
@@ -141,8 +160,8 @@ def _branch(items):
 
 def timeout_stats(ds, store_id=42, with_hour=True, client=None):
     """
-    with_hour=False 时不打那 24 次小时切片请求 —— 时段分布只有当天报表要用，
-    历史日（只用来算超时率/同比）没必要求，这是云端耗时最大的一笔开销。
+    with_hour=False 时跳过 KDS 出餐记录查询 —— 时段分布/出单时刻只有当天报表要用，
+    历史日（只用来算超时率/同比）没必要求，这是云端耗时的一笔开销。
     """
     items, dropped = pull_kds(ds, store_id, with_hour=with_hour, client=client)
     n = len(items)
@@ -210,6 +229,7 @@ def timeout_stats(ds, store_id=42, with_hour=True, client=None):
         "top": [
             {"name": i["name"], "mins": i["mins"], "exact": i["exact"],
              "kind_name": i["kind_name"], "limit": i["limit"], "hour": i["hour"],
+             "serve": i.get("serve"), "ordered": i.get("ordered"),
              # 兼容旧渲染字段
              "order_id": None, "created": "", "delivered": ""}
             for i in over[:10]
@@ -233,11 +253,12 @@ if __name__ == "__main__":
     print(f"  外卖 {s['take']['total']} 道 / 超 {s['take']['timeout']}（>{s['thr_take']}分，{s['take']['rate']}%）"
           f"  均 {s['take']['avg']} 分")
     print("  分档:", s["buckets"])
-    print("  时段(道数):", s["peak"])
-    print("  时段(超时):", s["peak_over"])
+    print("  时段(道数,按出单时间):", s["peak"])
+    print("  时段(超时,按出单时间):", s["peak_over"])
     print("\n超时明细:")
     for t in s["top"]:
-        print(f"  {t['mins']:>3}分  {t['kind_name']:<6} {t['hour'] if t['hour'] is not None else '?':>2}时  {t['name']}")
+        print(f"  {t['mins']:>3}分  {t['kind_name']:<6} "
+              f"出单 {t.get('serve') or '?'}  (下单 {t.get('ordered') or '?'})  {t['name']}")
     print("\n高频超时菜品:")
     for b in s["by_name"]:
         print(f"  {b['name'][:20]:<22} {b['cnt']} 道  最长 {b['max']}分  平均 {b['avg']}分")
