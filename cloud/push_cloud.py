@@ -5,7 +5,9 @@
     python cloud/push_cloud.py [YYYY-MM-DD] [--dry-run]
 
 环境变量:
-    DINGTALK_WEBHOOK_TOKEN    群自定义机器人的 access_token（必填）
+    DINGTALK_WEBHOOK_TOKEN    群自定义机器人的 access_token（必填，主群）
+    DINGTALK_WEBHOOK_TOKEN2   第二个群的自定义机器人 access_token（选填，
+                              配了就两个群同步推送，如「惠州流程执行群A」）
     DINGTALK_WEBHOOK_SECRET   群机器人的加签密钥（选填，推荐配上更安全）
     IMAGE_BASE_URL            图片公网前缀，留空则按 GitHub 仓库自动拼
     IMAGE_SHA                 图片所在的 commit sha（留空用 GITHUB_SHA）
@@ -35,7 +37,10 @@ MENTIONS = CFG.get("mentions") or {}
 PHONES = CFG.get("mentions_phones") or {}
 
 TOKEN = os.environ.get("DINGTALK_WEBHOOK_TOKEN", "").strip()
+TOKEN2 = os.environ.get("DINGTALK_WEBHOOK_TOKEN2", "").strip()
 SECRET = os.environ.get("DINGTALK_WEBHOOK_SECRET", "").strip()
+# 两个群同步推送：token 列表在运行时确定，第二个群没配 token 就只发主群
+TOKENS = [t for t in (TOKEN, TOKEN2) if t]
 
 
 def image_base_url():
@@ -82,8 +87,9 @@ def _sign(secret):
     return ts, urllib.parse.quote_plus(base64.b64encode(dig))
 
 
-def send_markdown(title, text, at_mobiles=None, at_user_ids=None):
-    url = f"https://oapi.dingtalk.com/robot/send?access_token={TOKEN}"
+def send_markdown(title, text, at_mobiles=None, at_user_ids=None, token=None):
+    tk = token or TOKEN
+    url = f"https://oapi.dingtalk.com/robot/send?access_token={tk}"
     if SECRET:
         ts, sign = _sign(SECRET)
         url += f"&timestamp={ts}&sign={sign}"
@@ -183,20 +189,29 @@ def push(date=None, dry_run=False):
             missing.append(f"{suffix}（CDN 不可访问）")
             continue
 
-        res = send_markdown(title, text, at_mobiles=mobiles or None)
-        if res.get("errcode") == 0:
-            print(f"[成功] {name}")
+        sent_groups = 0
+        for gi, tk in enumerate(TOKENS):
+            gtag = f"@群{gi + 1}"
+            res = send_markdown(title, text, at_mobiles=mobiles or None,
+                                token=tk)
+            if res.get("errcode") == 0:
+                print(f"[成功]{gtag} {name}")
+                sent_groups += 1
+            elif "系统繁忙" in str(res.get("errmsg") or ""):
+                # 2026-11-09/10 连续验证：钉钉回「系统繁忙」时消息 3/3 全部已
+                # 投递到群（本地读群消息核对过）。当成功处理，不进告警清单。
+                print(f"[成功·系统繁忙]{gtag} {name}（已投递，实证 3/3）")
+                sent_groups += 1
+            else:
+                # 其余业务错误：不重发（机器人无幂等键，重发=重复），记进漏发清单
+                print(f"[未确认]{gtag} {name}：{res}（不重发，避免重复）")
+                missing.append(f"{suffix}@群{gi + 1}"
+                               f"（{res.get('errmsg') or res.get('errcode')}）")
+            # 双群连发也放点间隔，降低限流概率
+            if len(TOKENS) > 1:
+                time.sleep(3)
+        if sent_groups == len(TOKENS):
             ok += 1
-        elif "系统繁忙" in str(res.get("errmsg") or ""):
-            # 2026-11-09/10 连续验证：钉钉回「系统繁忙」时消息 3/3 全部已投递到群
-            # （本地读群消息核对过）。把它当成功处理，不再进告警清单，
-            # 否则每天虚惊一条「未确认送达」，老板会以为真的漏了。
-            print(f"[成功·系统繁忙] {name}（钉钉返回繁忙但消息已投递，实证 3/3）")
-            ok += 1
-        else:
-            # 其余业务错误：不重发（机器人无幂等键，重发=重复），记进漏发清单
-            print(f"[未确认] {name}：{res}（不重发，避免重复）")
-            missing.append(f"{suffix}（{res.get('errmsg') or res.get('errcode')}）")
         # 间隔放宽到 8 秒：连发图片容易触发钉钉限流，就是「系统繁忙」的来源
         time.sleep(8)
 

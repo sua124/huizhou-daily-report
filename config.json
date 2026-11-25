@@ -24,7 +24,14 @@
   },
   "dingtalk_group": {
     "name": "惠州一店管理组群",
-    "open_conversation_id": "ciduYUZBDcDNEyWrd71g2Stbw=="
+    "open_conversation_id": "ciduYUZBDcDNEyWrd71g2Stbw==",
+    "groups_extra": [
+      {
+        "name": "惠州流程执行群A",
+        "open_conversation_id": "cidvuLWWamrdUqz5MutGPX74Q==",
+        "note": "2026-11-25 起同步收日报图。token 走环境变量 DINGTALK_WEBHOOK_TOKEN2（GitHub Secret），没有 token 时自动跳过该群"
+      }
+    ]
   },
   "mentions": {
     "01_经营概览": ["13719435264"],
