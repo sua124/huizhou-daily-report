@@ -231,6 +231,37 @@ def build_page(rows, out_path, store_label="惠州店",
          "sub": "超红线" if loss_rate > thr else "正常"},
     ])
 
+    # ===== 客流与开台（2026-11-26 上移至经营概览区；新增去年同期开台数，
+    #       原「开台数达成」改为「对比去年同期」同比口径）=====
+    people = int(last.get("people") or 0)
+    people_avg = float(last.get("people_avg") or 0)
+    turnover = float(last.get("turnover") or 0)
+    month_open = float(last.get("month_table_open") or 0)
+    ly_open = float(last.get("last_year_open") or 0)
+    if ly_open:
+        diff = month_open - ly_open
+        yoy = diff / ly_open * 100
+        yoy_txt = f"{'▲' if yoy >= 0 else '▼'}{abs(yoy):.1f}%"
+        # 低于去年同期（少开台）标红；追平或超过为蓝
+        yoy_col = UP if yoy < 0 else ACCENT
+        yoy_sub = f"{'少' if diff < 0 else '多'}开 {abs(diff):,.0f} 次"
+    else:
+        yoy_txt, yoy_col, yoy_sub = "-", INK, "去年同期无数据"
+    p.section("客流与开台")
+    p.cards([
+        {"label": "顾客（人）", "value": f"{people:,}",
+         "sub": f"人均 ¥{m2(people_avg)}"},
+        {"label": "翻台率（次/桌）", "value": f"{turnover:.2f}",
+         "sub": f"开台 {last.get('table_open', 0)} ÷ {last.get('table_count', 0)} 桌"},
+        {"label": "本月累计开台数", "value": f"{month_open:,.0f}",
+         "sub": "月初至今累计"},
+        {"label": "去年同期开台数",
+         "value": f"{ly_open:,.0f}" if ly_open else "-",
+         "sub": "去年同月初至今"},
+        {"label": "对比去年同期", "value": yoy_txt, "color": yoy_col,
+         "sub": yoy_sub},
+    ], cols=5, height=122)
+
     # ===== 超时分析 =====
     ts = last.get("timeout") or {}
     prev_ts = (prev or {}).get("timeout") or {}
@@ -325,27 +356,6 @@ def build_page(rows, out_path, store_label="惠州店",
                 aligns=["left", "right", "right", "right", "right"],
                 colors=color_c)
         p.note("毛利率 = 实收 ÷ 应收；红字为低于 60%", size=17, gap=6)
-
-    # ===== 客流与开台（2026-11-25 新增）=====
-    people = int(last.get("people") or 0)
-    people_avg = float(last.get("people_avg") or 0)
-    turnover = float(last.get("turnover") or 0)
-    month_open = float(last.get("month_table_open") or 0)
-    ly_open = float(last.get("last_year_open") or 0)
-    open_rate = month_open / ly_open * 100 if ly_open else None
-    p.section("客流与开台")
-    p.cards([
-        {"label": "顾客（人）", "value": f"{people:,}",
-         "sub": f"人均消费 ¥{m2(people_avg)}"},
-        {"label": "翻台率（次/桌）", "value": f"{turnover:.2f}",
-         "sub": f"开台 {last.get('table_open', 0):,} ÷ 实际桌数 {last.get('table_count', 0)}"},
-        {"label": "本月累计开台数", "value": f"{month_open:,.0f}",
-         "sub": f"去年同期 {ly_open:,.0f}" if ly_open else "去年同期无数据"},
-        {"label": "开台数达成",
-         "value": f"{open_rate:.1f}%" if open_rate is not None else "-",
-         "color": UP if (open_rate is not None and open_rate < 80) else ACCENT,
-         "sub": "本月累计 ÷ 去年同期开台数"},
-    ], cols=4, height=122)
 
     p.note("说明：营业额、目标达成均按实收口径；损耗取后台报损单；超时按 KDS 出品时长，"
            "堂食 >20 分、外卖 >15 分；翻台率=开台数÷实际营业桌数；毛利率=实收÷应收。",
