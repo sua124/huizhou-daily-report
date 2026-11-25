@@ -218,7 +218,9 @@ def build_page(rows, out_path, store_label="惠州店",
     # 2026-11-25 老板定标：损耗占实收 >0.3% 标红（后台 0.35 仅参考，不再作为红线）
     thr = LOSS_RED
     p.cards([
+        # 2026-11-25 老板定：赠菜金额只要非 0 就标红
         {"label": "赠菜金额（元）", "value": m2(last.get("send")),
+         "color": UP if float(last.get("send") or 0) > 0 else INK,
          "sub": f"赠送 {last.get('send_qty', 0)} 份"},
         {"label": "赠菜占实收", "value": pctv(last.get("send"), pay), "sub": "按实收计算"},
         {"label": "损耗金额（元）", "value": m2(loss),

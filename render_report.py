@@ -210,7 +210,8 @@ def build_overview(rows, out_path, store_label="13店（正佳广场店）"):
     c.kpi_row([
         ("营业额（元）", money(last["revenue"]), s1, ACCENT, False,
          f"优惠 {money(last['favourable'])}"),
-        ("赠菜金额（元）", money(last["send"]), s2, INK, False,
+        ("赠菜金额（元）", money(last["send"]), s2,
+         UP if float(last.get("send") or 0) > 0 else INK, False,
          f"{last.get('send_qty', 0)} 份"),
         ("折扣金额（元）", money(last["discount"]), s3, INK, False,
          f"{last.get('discount_count', 0)} 单 · {last.get('discount_qty', 0)} 份"),
@@ -389,8 +390,10 @@ def build_discount(rows, out_path, store_label="13店（正佳广场店）"):
     c.section("当日汇总")
     fav = last["favourable"]
     c.kpi_row([
+        # 2026-11-25 老板定：赠菜金额只要非 0 就标红
         ("赠菜金额（元）", f"{sd.get('total', 0):,.2f}",
-         f"{sd.get('count', 0)} 条 · {sd.get('qty', 0)} 份", INK),
+         f"{sd.get('count', 0)} 条 · {sd.get('qty', 0)} 份",
+         UP if float(sd.get("total") or 0) > 0 else INK),
         ("折扣金额（元）", f"{dd.get('total', 0):,.2f}",
          f"{dd.get('count', 0)} 单 · {dd.get('qty', 0)} 份", INK),
         ("合计占营业额", pct(sd.get("total", 0) + dd.get("total", 0), last["revenue"]),
