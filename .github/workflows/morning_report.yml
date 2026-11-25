@@ -161,6 +161,8 @@ jobs:
         if: steps.dup.outputs.skip != '1' && github.event.inputs.dry_run != 'true'
         env:
           DINGTALK_WEBHOOK_TOKEN: ${{ secrets.DINGTALK_WEBHOOK_TOKEN }}
+          # 第二个群（惠州流程执行群A）的机器人 token；没配就只发主群
+          DINGTALK_WEBHOOK_TOKEN2: ${{ secrets.DINGTALK_WEBHOOK_TOKEN2 }}
           DINGTALK_WEBHOOK_SECRET: ${{ secrets.DINGTALK_WEBHOOK_SECRET }}
           TITLE_SUFFIX: '·晨间复核'
         run: python cloud/push_cloud.py "$RPT_DATE"
