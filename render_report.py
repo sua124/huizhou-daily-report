@@ -386,9 +386,12 @@ def build_discount(rows, out_path, store_label="13店（正佳广场店）"):
     sd = last.get("send_detail") or {}
     dd = last.get("discount_detail") or {}
 
-    # 概览两卡
+    # 概览卡（2026-11-26 加损耗金额/占比，共 5 卡）
     c.section("当日汇总")
     fav = last["favourable"]
+    loss_amt = float(last.get("loss") or 0)
+    loss_pay = float(last.get("pay") or last.get("revenue") or 0)
+    loss_rate_v = loss_amt / loss_pay * 100 if loss_pay else 0
     c.kpi_row([
         # 2026-11-25 老板定：赠菜金额只要非 0 就标红
         ("赠菜金额（元）", f"{sd.get('total', 0):,.2f}",
@@ -398,6 +401,12 @@ def build_discount(rows, out_path, store_label="13店（正佳广场店）"):
          f"{dd.get('count', 0)} 单 · {dd.get('qty', 0)} 份", INK),
         ("合计占营业额", pct(sd.get("total", 0) + dd.get("total", 0), last["revenue"]),
          f"共 {sd.get('total', 0) + dd.get('total', 0):,.2f} 元", ACCENT),
+        ("损耗金额（元）", f"{loss_amt:,.2f}",
+         f"{last.get('loss_top5_orders', 0) or 0} 单报损", INK),
+        ("损耗占实收", f"{loss_rate_v:.2f}%",
+         "超红线 0.3%" if loss_rate_v > LOSS_RED else "按实收计算",
+         UP if loss_rate_v > LOSS_RED else INK,
+         loss_rate_v > LOSS_RED),
     ], big=False)
 
     # ---- 赠菜明细 ----

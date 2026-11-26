@@ -22,24 +22,35 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WORKFLOW = "daily_report.yml"
 
 
-def api(method, path, pat, data=None):
+def api(method, path, pat, data=None, tries=3):
+    """带网络重试：本机到 api.github.com 偶发 SSL 断流/超时（2026-11-26），
+    对网络类异常重试 3 次；HTTPError（4xx/5xx 业务响应）不重试直接返回。"""
+    import time
+    import ssl as _ssl
     body = json.dumps(data).encode() if data is not None else None
-    r = urllib.request.Request(API + path, data=body, method=method)
-    r.add_header("Authorization", "Bearer " + pat)
-    r.add_header("Accept", "application/vnd.github+json")
-    r.add_header("User-Agent", "daily-report-deploy")
-    if body:
-        r.add_header("Content-Type", "application/json")
-    try:
-        with urllib.request.urlopen(r, timeout=90) as resp:
-            txt = resp.read().decode("utf-8", "replace")
-            return resp.status, (json.loads(txt) if txt.strip() else {})
-    except urllib.error.HTTPError as e:
-        txt = e.read().decode("utf-8", "replace")
+    for attempt in range(tries):
+        r = urllib.request.Request(API + path, data=body, method=method)
+        r.add_header("Authorization", "Bearer " + pat)
+        r.add_header("Accept", "application/vnd.github+json")
+        r.add_header("User-Agent", "daily-report-deploy")
+        if body:
+            r.add_header("Content-Type", "application/json")
         try:
-            return e.code, json.loads(txt)
-        except Exception:
-            return e.code, {"raw": txt}
+            with urllib.request.urlopen(r, timeout=120) as resp:
+                txt = resp.read().decode("utf-8", "replace")
+                return resp.status, (json.loads(txt) if txt.strip() else {})
+        except urllib.error.HTTPError as e:
+            txt = e.read().decode("utf-8", "replace")
+            try:
+                return e.code, json.loads(txt)
+            except Exception:
+                return e.code, {"raw": txt}
+        except (urllib.error.URLError, TimeoutError, ConnectionError,
+                _ssl.SSLError, OSError) as e:
+            if attempt == tries - 1:
+                raise
+            print(f"  网络异常，重试 {attempt + 1}/{tries - 1}：{type(e).__name__}")
+            time.sleep(5)
 
 
 def tracked_files():
