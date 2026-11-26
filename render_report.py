@@ -551,7 +551,8 @@ def build_discount(rows, out_path, store_label="13店（正佳广场店）"):
                f"{float(last.get('loss_top5_total') or 0):,.2f} 元；"
                "口径：按报损单创建日期（与图1红线损耗的库存口径略有差异）", size=17)
     else:
-        c.note("当日无报损记录", size=20, gap=4)
+        # Canvas.note() 无 gap 参数（2026-11-26 修复：无报损分支曾致晨报崩溃）
+        c.note("当日无报损记录", size=20)
     c.y += 6
 
     c.footer([
