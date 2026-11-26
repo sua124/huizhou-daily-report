@@ -45,6 +45,13 @@ def pull_loss(client, ds, store_id, ds_end=None):
     }
 
 
+# 报损类型枚举（后台「报损单-类型」下拉，2026-11-26 老板要求损耗前5显示原因）
+# second_type=6 已用备注实证（凤梨过熟/来货破损/淤血 → 供货异常报损），
+# 其余按后台下拉顺序推定
+LOSS_TYPE_NAMES = {1: "品项报损", 2: "菜品报损", 3: "留样报损", 4: "试味报损",
+                   5: "培训报损", 6: "供货异常报损", 7: "餐具报损"}
+
+
 def loss_top5(client, ds, store_id):
     """损耗前5（品名 + 金额含税）
 
@@ -55,7 +62,8 @@ def loss_top5(client, ds, store_id):
       无含税价时退回 loss_price（不含税）；
     - 注意：与 lossStatistics 的官方损耗总额日期归属有差异（官方按库存口径），
       本接口用于「当日哪些损耗最多」的排行展示，不作红线判定。
-    返回 {'top5': [{'name','amount','num'}...], 'total': 当日含税合计, 'orders': 单数}
+    返回 {'top5': [{'name','amount','num','reason'}...], 'total': 当日含税合计, 'orders': 单数}
+    reason = 该品名金额占比最高的报损类型（品项/菜品/留样/试味/培训/供货异常/餐具报损）
     """
     orders = []
     page = 1
@@ -82,6 +90,7 @@ def loss_top5(client, ds, store_id):
     agg = {}
     total = 0.0
     for o in orders:
+        reason = LOSS_TYPE_NAMES.get(o.get("second_type"), "")
         try:
             rr = client.post("/admin/scm_product_stock_verify/detail",
                              {"id": o.get("id")})
@@ -93,15 +102,22 @@ def loss_top5(client, ds, store_id):
             name = (g.get("name") or "?").strip()
             amt = float(g.get("original_amount") or 0) or float(g.get("loss_price") or 0)
             num = float(g.get("num") or 0)
-            it = agg.setdefault(name, {"name": name, "amount": 0.0, "num": 0.0})
+            it = agg.setdefault(name, {"name": name, "amount": 0.0, "num": 0.0,
+                                       "reasons": {}})
             it["amount"] += amt
             it["num"] += num
+            if reason:
+                # 原因挂单上：同品名跨单不同原因时，按金额累计
+                it["reasons"][reason] = it["reasons"].get(reason, 0.0) + amt
             total += amt
 
     top = sorted(agg.values(), key=lambda z: -z["amount"])[:5]
     for it in top:
         it["amount"] = round(it["amount"], 2)
         it["num"] = round(it["num"], 1)
+        rs = it.pop("reasons", {})
+        # 主原因 = 该品名金额占比最高的报损类型
+        it["reason"] = max(rs, key=rs.get) if rs else ""
     return {"top5": top, "total": round(total, 2), "orders": len(orders)}
 
 

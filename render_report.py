@@ -552,12 +552,28 @@ def build_discount(rows, out_path, store_label="13店（正佳广场店）"):
         tot = float(last.get("loss_top5_total") or 0) or 1
         for k, it in enumerate(lt5):
             nm = it.get("name", "-")
-            if len(nm) > 26:
-                nm = nm[:25] + "…"
+            if len(nm) > 24:
+                nm = nm[:23] + "…"
             band = "#FDEDEC" if k == 0 else ("#FFFFFF" if k % 2 else CARD)
             dr.rectangle([PAD, c.y, W - PAD, c.y + 46], fill=band)
-            dr.text((hx[0], c.y + 11), f"{k + 1}. {nm}", font=F(19),
+            prefix = f"{k + 1}. {nm}"
+            dr.text((hx[0], c.y + 11), prefix, font=F(19),
                     fill=UP if k == 0 else INK)
+            # 报损原因（2026-11-26 老板新增）：品名后灰色小字，如 蟹柳（供货异常报损）
+            reason = it.get("reason") or ""
+            if reason:
+                pw = dr.textlength(prefix, font=F(19))
+                tag_full = f"（{reason}）"
+                tw = dr.textlength(tag_full, font=F(16))
+                # 与金额列（右界 hx[1]，最宽约 100px）保持间距，放得下就显示全称
+                if hx[0] + pw + 6 + tw <= hx[1] - 100:
+                    tag = tag_full
+                else:
+                    tag = f"（{reason[:4]}…）" if len(reason) > 5 else tag_full
+                    if hx[0] + pw + 6 + dr.textlength(tag, font=F(16)) > hx[1] - 100:
+                        tag = ""          # 连缩写都放不下则不画，保住金额列
+                if tag:
+                    dr.text((hx[0] + pw + 6, c.y + 14), tag, font=F(16), fill=INK3)
             dr.text((hx[1], c.y + 11), f"{float(it.get('amount') or 0):,.2f} 元",
                     font=F(20, True), fill=UP if k == 0 else INK, anchor="ra")
             dr.text((hx[2], c.y + 12),
