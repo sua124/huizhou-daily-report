@@ -31,6 +31,10 @@ HILITE_BG = "#FDEDEC"
 HILITE_SUB = "#D98880"
 
 FONT_CANDIDATES = [
+    # 云端 GitHub Actions：workflow 下载到 ~/.fonts 的 Noto Sans SC（首选，与 runner 镜像解耦；
+    # 本地 Windows 无 ~/.fonts，自动落空走下面的系统字体）
+    (os.path.expanduser("~/.fonts/NotoSansSC-Bold.otf"),
+     os.path.expanduser("~/.fonts/NotoSansSC-Regular.otf")),
     # Windows（本地）
     (r"C:\Windows\Fonts\msyhbd.ttc", r"C:\Windows\Fonts\msyh.ttc"),
     (r"C:\Windows\Fonts\simhei.ttf", r"C:\Windows\Fonts\simhei.ttf"),
@@ -60,7 +64,12 @@ def _scan_system_cjk():
                 low = f.lower()
                 if not low.endswith((".ttf", ".otf", ".ttc")):
                     continue
-                if any(k in f for k in ("CJK", "Noto", "WenQuanYi", "wqy",
+                if "emoji" in low:
+                    # NotoColorEmoji 等位图字体加载任意字号都会报
+                    # OSError: invalid pixel size（2026-11-26 云端 dry_run 踩坑）
+                    continue
+                if any(k in f for k in ("CJK", "NotoSansCJK", "NotoSansSC",
+                                        "WenQuanYi", "wqy",
                                         "Droid Sans Fallback")):
                     p = os.path.join(dirpath, f)
                     return p, p
