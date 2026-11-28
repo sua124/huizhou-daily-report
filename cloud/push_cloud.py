@@ -140,8 +140,10 @@ def push(date=None, dry_run=False):
     pngs = sorted(p for p in os.listdir(OUT)
                   if p.startswith(f"report_{td}_") and p.lower().endswith(".png"))
     if not pngs:
-        print(f"output 目录找不到 {td} 的日报图片")
-        return 0, 0
+        # 2026-11-28 教训：这里以前 return 0,0（exit 0）= 假成功，步骤显示
+        # success 但群里什么都没有，还没告警。必须以非零退出触发告警。
+        print(f"[严重] output 目录找不到 {td} 的日报图片，拒绝静默退出")
+        return 0, 1
 
     base = image_base_url()
     if not base:

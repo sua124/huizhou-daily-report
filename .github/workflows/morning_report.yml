@@ -125,6 +125,9 @@ jobs:
             sleep 30
             python daily_report.py "$RPT_DATE"
           }
+          # 2026-11-28 加固：目标日图不存在说明数据/生成出了岔子，绝不能往下走
+          ls output/report_${RPT_DATE}_*.png >/dev/null 2>&1 \
+            || { echo "::error::output 缺少 ${RPT_DATE} 的日报图片，终止推送"; exit 1; }
 
       - name: 归档图片供 CDN 分发
         if: steps.dup.outputs.skip != '1' && github.event.inputs.dry_run != 'true'

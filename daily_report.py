@@ -309,6 +309,15 @@ def pull(target_date=None, lookback=14):
         rows[-1]["month_table_open"] = round(month_open + float(rows[-1].get("table_open") or 0))
         rows[-1]["last_year_open"] = last_year_open
 
+    # 目标日缺数据 = 日报会静默变成前一天的图（2026-11-28 晨报漏发根因：
+    # 目标日接口偶发返回空，rows[-1] 变成前一天，推送找不到对应图名又假成功退出）。
+    # 这里 fail fast：直接报错退出，交给 workflow 的 30 秒重试 / 失败告警处理。
+    if not rows or rows[-1]["date"] != tgt.isoformat():
+        got = rows[-1]["date"] if rows else "无任何数据"
+        raise SystemExit(
+            f"[严重] 目标日 {tgt.isoformat()} 无营业数据（实际最后一天 {got}），"
+            f"拒绝生成日报，避免拿旧日期的图冒充推送")
+
     path = os.path.join(DATA, f"report_{tgt.isoformat()}.json")
     json.dump(rows, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     return path, rows

@@ -134,12 +134,16 @@ jobs:
           MODA_PASSWORD: ${{ secrets.MODA_PASSWORD }}
         run: |
           D="${{ github.event.inputs.date }}"
+          if [ -z "$D" ]; then D=$(TZ=Asia/Shanghai date +%F); fi
           # 偶发网络抖动导致整份日报失败太亏，失败歇 30 秒再试一次
           python daily_report.py $D || {
             echo "::warning::首次生成失败，30 秒后自动重试"
             sleep 30
             python daily_report.py $D
           }
+          # 2026-11-28 加固：目标日图不存在说明数据/生成出了岔子，绝不能往下走
+          ls output/report_${D}_*.png >/dev/null 2>&1 \
+            || { echo "::error::output 缺少 ${D} 的日报图片，终止推送"; exit 1; }
 
       - name: 归档图片供 CDN 分发
         if: steps.dup.outputs.skip != '1' && github.event.inputs.dry_run != 'true'
